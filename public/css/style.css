@@ -1484,3 +1484,67 @@ button { cursor: pointer; }
   margin-right: 2px;
   opacity: 0.7;
 }
+
+/* ============ USER PROFILE MODAL ============ */
+.up-avatar {
+  width: 90px;
+  height: 90px;
+  margin: 0 auto 12px;
+  font-size: 32px;
+}
+
+.up-name {
+  text-align: center;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.up-status {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 20px;
+}
+
+.up-status.online {
+  color: var(--accent);
+}
+
+.up-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.up-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 24px;
+  border: none;
+  border-radius: 10px;
+  background: var(--accent);
+  color: white;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.15s;
+}
+
+.up-action-btn:hover {
+  background: #1a9ae0;
+  transform: scale(1.03);
+}
+
+/* Clickable chat header */
+.chat-header-info {
+  cursor: pointer;
+}
+
+.chat-header-avatar {
+  cursor: pointer;
+}

@@ -697,6 +697,60 @@ function openSettingsModal() {
   settingsModal.style.display = 'flex';
 }
 
+// ============ USER PROFILE (view other users) ============
+const userProfileModal = $('#user-profile-modal');
+const upAvatar = $('#up-avatar');
+const upName = $('#up-name');
+const upStatus = $('#up-status');
+const upUsername = $('#up-username');
+const upSendMessage = $('#up-send-message');
+let userProfileTarget = null; // store user data for "send message" action
+
+function openUserProfile(user) {
+  if (!user) return;
+
+  userProfileTarget = user;
+
+  // Avatar
+  const displayName = user.display_name || user.other_display_name || '?';
+  const avatarColor = user.avatar_color || user.other_avatar_color || '#5B9BD5';
+  const avatarUrl = user.avatar_url || user.other_avatar_url || null;
+  setAvatarElement(upAvatar, displayName, avatarColor, avatarUrl);
+
+  // Name
+  upName.textContent = displayName;
+
+  // Username
+  const username = user.username || user.other_username || '';
+  upUsername.textContent = '@' + username;
+
+  // Online status
+  const isOnline = user.is_online || user.other_is_online || false;
+  if (isOnline) {
+    upStatus.textContent = 'в сети';
+    upStatus.classList.add('online');
+  } else {
+    const lastSeen = user.last_seen || user.other_last_seen;
+    upStatus.textContent = lastSeen ? `был(а) ${formatLastSeen(lastSeen)}` : 'не в сети';
+    upStatus.classList.remove('online');
+  }
+
+  // Show/hide send message button based on context
+  const userId = user.id || user.other_user_id;
+  if (userId && userId !== state.user.id) {
+    upSendMessage.style.display = 'flex';
+  } else {
+    upSendMessage.style.display = 'none';
+  }
+
+  userProfileModal.style.display = 'flex';
+}
+
+function closeUserProfile() {
+  userProfileModal.style.display = 'none';
+  userProfileTarget = null;
+}
+
 // ============ AVATAR UPLOAD ============
 const avatarInput = $('#avatar-input');
 const profileAvatarWrapper = $('#profile-avatar-wrapper');
@@ -792,6 +846,25 @@ function setupEventListeners() {
     if (e.target.files && e.target.files[0]) {
       handleAvatarUpload(e.target.files[0]);
       avatarInput.value = ''; // reset so same file can be re-selected
+    }
+  });
+
+  // View other user's profile — click on chat header
+  chatAvatar.addEventListener('click', () => {
+    if (state.currentOtherUser) openUserProfile(state.currentOtherUser);
+  });
+  $('.chat-header-info').addEventListener('click', () => {
+    if (state.currentOtherUser) openUserProfile(state.currentOtherUser);
+  });
+
+  // User profile modal
+  $('#user-profile-close').addEventListener('click', closeUserProfile);
+  userProfileModal.addEventListener('click', (e) => { if (e.target === userProfileModal) closeUserProfile(); });
+  upSendMessage.addEventListener('click', () => {
+    const userId = userProfileTarget?.id || userProfileTarget?.other_user_id;
+    if (userId) {
+      closeUserProfile();
+      openChat(userId);
     }
   });
 
@@ -896,7 +969,9 @@ function setupEventListeners() {
   // Handle escape key
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (searchResults.style.display === 'block') {
+      if (userProfileModal.style.display !== 'none') {
+        closeUserProfile();
+      } else if (searchResults.style.display === 'block') {
         hideSearch();
       }
     }
