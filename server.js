@@ -3,7 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const { initDB, ops, uuidv4, bcrypt, getRandomColor } = require('./database');
+const { pool, initDB, ops, uuidv4, bcrypt, getRandomColor } = require('./database');
 
 const app = express();
 const server = http.createServer(app);
@@ -103,14 +103,19 @@ app.post('/api/login', async (req, res) => {
 // Debug: list all users (remove later)
 app.get('/api/users', async (req, res) => {
   try {
-    const { rows } = await require('./database').pool.query(
+    const { rows } = await pool.query(
       `SELECT id, username, display_name, avatar_color, is_online, created_at FROM users ORDER BY created_at DESC`
     );
-    res.json({ count: rows.length, users: rows });
+    return res.json({ count: rows.length, users: rows });
   } catch (err) {
     console.error('Users list error:', err);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
+});
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
 // ============ SOCKET.IO ============
