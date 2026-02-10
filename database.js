@@ -56,6 +56,9 @@ async function initDB() {
     await client.query(`CREATE INDEX IF NOT EXISTS idx_chat_members_user ON chat_members(user_id)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_messages_read ON messages(chat_id, is_read)`);
 
+    // Add avatar_url column if not exists
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT NULL`);
+
     console.log('Database initialized');
   } finally {
     client.release();
@@ -90,7 +93,7 @@ const ops = {
 
   async getUserById(id) {
     const { rows } = await pool.query(
-      `SELECT id, username, display_name, avatar_color, last_seen, is_online FROM users WHERE id = $1`,
+      `SELECT id, username, display_name, avatar_color, avatar_url, last_seen, is_online FROM users WHERE id = $1`,
       [id]
     );
     return rows[0] || null;
@@ -99,7 +102,7 @@ const ops = {
   async searchUsers(query, excludeId) {
     const pattern = `%${query}%`;
     const { rows } = await pool.query(
-      `SELECT id, username, display_name, avatar_color, is_online
+      `SELECT id, username, display_name, avatar_color, avatar_url, is_online
        FROM users
        WHERE (username ILIKE $1 OR display_name ILIKE $2) AND id != $3
        LIMIT 20`,
@@ -147,6 +150,7 @@ const ops = {
         u.username as other_username,
         u.display_name as other_display_name,
         u.avatar_color as other_avatar_color,
+        u.avatar_url as other_avatar_url,
         u.is_online as other_is_online,
         u.last_seen as other_last_seen,
         (SELECT text FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message,
@@ -175,7 +179,7 @@ const ops = {
     const { rows } = await pool.query(
       `SELECT 
         m.id, m.chat_id, m.sender_id, m.text, m.created_at, m.is_read,
-        u.username as sender_username, u.display_name as sender_display_name, u.avatar_color as sender_avatar_color
+        u.username as sender_username, u.display_name as sender_display_name, u.avatar_color as sender_avatar_color, u.avatar_url as sender_avatar_url
       FROM messages m
       JOIN users u ON u.id = m.sender_id
       WHERE m.chat_id = $1
@@ -200,9 +204,13 @@ const ops = {
     return rows;
   },
 
+  async updateAvatar(userId, avatarUrl) {
+    await pool.query(`UPDATE users SET avatar_url = $1 WHERE id = $2`, [avatarUrl, userId]);
+  },
+
   async getAllUsers() {
     const { rows } = await pool.query(
-      `SELECT id, username, display_name, avatar_color, is_online, created_at FROM users ORDER BY created_at DESC`
+      `SELECT id, username, display_name, avatar_color, avatar_url, is_online, created_at FROM users ORDER BY created_at DESC`
     );
     return rows;
   }

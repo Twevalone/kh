@@ -1206,3 +1206,56 @@ button { cursor: pointer; }
 ::selection {
   background: rgba(42, 171, 238, 0.3);
 }
+
+/* ============ AVATAR IMAGES ============ */
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Profile avatar upload wrapper */
+.profile-avatar-wrapper {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 16px;
+  cursor: pointer;
+  border-radius: 50%;
+}
+
+.profile-avatar-wrapper .profile-avatar {
+  margin: 0;
+  width: 80px;
+  height: 80px;
+}
+
+.profile-avatar-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.profile-avatar-overlay span {
+  font-size: 10px;
+  color: white;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+.profile-avatar-wrapper:hover .profile-avatar-overlay {
+  opacity: 1;
+}

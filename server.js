@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 3000;
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 // ============ REST API ============
 
@@ -56,7 +56,7 @@ app.post('/api/register', async (req, res) => {
 
     res.json({
       token,
-      user: { id, username: username.toLowerCase(), displayName, avatarColor }
+      user: { id, username: username.toLowerCase(), displayName, avatarColor, avatarUrl: null }
     });
   } catch (err) {
     console.error('Register error:', err);
@@ -91,7 +91,8 @@ app.post('/api/login', async (req, res) => {
         id: user.id,
         username: user.username,
         displayName: user.display_name,
-        avatarColor: user.avatar_color
+        avatarColor: user.avatar_color,
+        avatarUrl: user.avatar_url || null
       }
     });
   } catch (err) {
@@ -112,6 +113,41 @@ app.get('/api/users', async (req, res) => {
     res.json({ count: users.length, users });
   } catch (err) {
     res.status(500).json({ error: String(err) });
+  }
+});
+
+// Upload avatar
+app.post('/api/avatar', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Требуется авторизация' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (e) {
+      return res.status(401).json({ error: 'Невалидный токен' });
+    }
+
+    const { avatar } = req.body;
+    if (!avatar) {
+      return res.status(400).json({ error: 'Аватар не предоставлен' });
+    }
+
+    // Check size: max ~200KB of base64 string
+    if (avatar.length > 300000) {
+      return res.status(400).json({ error: 'Аватар слишком большой (макс 200KB)' });
+    }
+
+    await ops.updateAvatar(decoded.userId, avatar);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Avatar upload error:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
 
@@ -256,7 +292,8 @@ io.on('connection', (socket) => {
         is_read: false,
         sender_username: sender?.username,
         sender_display_name: sender?.display_name,
-        sender_avatar_color: sender?.avatar_color
+        sender_avatar_color: sender?.avatar_color,
+        sender_avatar_url: sender?.avatar_url || null
       };
 
       // Send to all in room
@@ -287,6 +324,12 @@ io.on('connection', (socket) => {
     } catch (err) {
       console.error('messages:markRead error:', err);
     }
+  });
+
+  // Avatar updated
+  socket.on('avatar:updated', (avatarUrl) => {
+    // Broadcast to all connected users so they see the new avatar
+    socket.broadcast.emit('user:avatar-updated', { userId, avatarUrl });
   });
 
   // Typing indicator

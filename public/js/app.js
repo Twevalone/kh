@@ -262,6 +262,17 @@ function connectSocket() {
     }
     updateChatListOnlineStatus(userId, false);
   });
+
+  // Avatar updated by another user
+  state.socket.on('user:avatar-updated', ({ userId, avatarUrl }) => {
+    // Update current chat header if it's this user
+    if (state.currentOtherUser && state.currentOtherUser.id === userId) {
+      state.currentOtherUser.avatar_url = avatarUrl;
+      setAvatarElement(chatAvatar, state.currentOtherUser.display_name, state.currentOtherUser.avatar_color, avatarUrl);
+    }
+    // Refresh chat list to show updated avatars
+    loadChats();
+  });
 }
 
 function logout() {
@@ -301,8 +312,8 @@ function renderChatList() {
 
       return `
         <div class="chat-item ${isActive ? 'active' : ''}" data-chat-id="${chat.chat_id}" data-user-id="${chat.other_user_id}">
-          <div class="chat-item-avatar" style="background:${chat.other_avatar_color}">
-            ${initials}
+          <div class="chat-item-avatar" style="${getAvatarStyle(chat.other_avatar_color, chat.other_avatar_url)}">
+            ${renderAvatarHTML(chat.other_display_name, chat.other_avatar_color, chat.other_avatar_url)}
             ${chat.other_is_online ? '<div class="online-dot"></div>' : ''}
           </div>
           <div class="chat-item-body">
@@ -366,9 +377,7 @@ function openChat(otherUserId) {
 
     // Update header UI
     if (data.otherUser) {
-      const initials = getInitials(data.otherUser.display_name);
-      chatAvatar.style.background = data.otherUser.avatar_color;
-      chatAvatar.textContent = initials;
+      setAvatarElement(chatAvatar, data.otherUser.display_name, data.otherUser.avatar_color, data.otherUser.avatar_url);
       chatName.textContent = data.otherUser.display_name;
       updateChatStatus();
     }
@@ -516,8 +525,8 @@ function renderSearchResults(users) {
   } else {
     searchResultsList.innerHTML = users.map(u => `
       <div class="search-user-item" data-user-id="${u.id}">
-        <div class="search-user-avatar" style="background:${u.avatar_color}">
-          ${getInitials(u.display_name)}
+        <div class="search-user-avatar" style="${getAvatarStyle(u.avatar_color, u.avatar_url)}">
+          ${renderAvatarHTML(u.display_name, u.avatar_color, u.avatar_url)}
         </div>
         <div class="search-user-info">
           <div class="search-user-name">${escapeHtml(u.display_name)}</div>
@@ -622,10 +631,11 @@ const settingsModal = $('#settings-modal');
 function openSideMenu() {
   if (!state.user) return;
   // Fill user info
-  const initials = getInitials(state.user.displayName || state.user.display_name || '?');
-  menuAvatar.textContent = initials;
-  menuAvatar.style.background = state.user.avatarColor || state.user.avatar_color || '#5B9BD5';
-  menuName.textContent = state.user.displayName || state.user.display_name || '';
+  const displayName = state.user.displayName || state.user.display_name || '?';
+  const avatarColor = state.user.avatarColor || state.user.avatar_color || '#5B9BD5';
+  const avatarUrl = state.user.avatarUrl || state.user.avatar_url || null;
+  setAvatarElement(menuAvatar, displayName, avatarColor, avatarUrl);
+  menuName.textContent = displayName;
   menuUsername.textContent = '@' + (state.user.username || '');
 
   sideMenuOverlay.style.display = 'block';
@@ -641,10 +651,11 @@ function openProfileModal() {
   closeSideMenu();
   if (!state.user) return;
 
-  const initials = getInitials(state.user.displayName || state.user.display_name || '?');
-  profileAvatar.textContent = initials;
-  profileAvatar.style.background = state.user.avatarColor || state.user.avatar_color || '#5B9BD5';
-  profileDisplayName.textContent = state.user.displayName || state.user.display_name || '';
+  const displayName = state.user.displayName || state.user.display_name || '?';
+  const avatarColor = state.user.avatarColor || state.user.avatar_color || '#5B9BD5';
+  const avatarUrl = state.user.avatarUrl || state.user.avatar_url || null;
+  setAvatarElement(profileAvatar, displayName, avatarColor, avatarUrl);
+  profileDisplayName.textContent = displayName;
   profileUsername.textContent = '@' + (state.user.username || '');
   profileId.textContent = state.user.id || '';
 
@@ -654,6 +665,71 @@ function openProfileModal() {
 function openSettingsModal() {
   closeSideMenu();
   settingsModal.style.display = 'flex';
+}
+
+// ============ AVATAR UPLOAD ============
+const avatarInput = $('#avatar-input');
+const profileAvatarWrapper = $('#profile-avatar-wrapper');
+
+function handleAvatarUpload(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      // Resize to max 200x200
+      const canvas = document.createElement('canvas');
+      const MAX = 200;
+      let w = img.width, h = img.height;
+      if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+      else { w = Math.round(w * MAX / h); h = MAX; }
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+
+      const base64 = canvas.toDataURL('image/jpeg', 0.8);
+      uploadAvatar(base64);
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+async function uploadAvatar(base64) {
+  try {
+    const res = await fetch('/api/avatar', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + state.token
+      },
+      body: JSON.stringify({ avatar: base64 })
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Ошибка загрузки');
+
+    // Update local state
+    state.user.avatarUrl = base64;
+    state.user.avatar_url = base64;
+    localStorage.setItem('user', JSON.stringify(state.user));
+
+    // Update profile modal avatar
+    setAvatarElement(profileAvatar, state.user.displayName || state.user.display_name, null, base64);
+
+    // Broadcast via socket
+    if (state.socket && state.socket.connected) {
+      state.socket.emit('avatar:updated', base64);
+    }
+
+    // Reload chats so own chats update if needed
+    loadChats();
+  } catch (err) {
+    console.error('Avatar upload error:', err);
+    alert('Ошибка загрузки аватара: ' + err.message);
+  }
 }
 
 // ============ EVENT LISTENERS ============
@@ -678,6 +754,15 @@ function setupEventListeners() {
   $('#menu-logout').addEventListener('click', () => {
     closeSideMenu();
     logout();
+  });
+
+  // Avatar upload
+  profileAvatarWrapper.addEventListener('click', () => { avatarInput.click(); });
+  avatarInput.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) {
+      handleAvatarUpload(e.target.files[0]);
+      avatarInput.value = ''; // reset so same file can be re-selected
+    }
   });
 
   // Close modals
@@ -790,6 +875,29 @@ function updateSendButton() {
     sendBtn.classList.add('active');
   } else {
     sendBtn.classList.remove('active');
+  }
+}
+
+// ============ AVATAR HELPERS ============
+function renderAvatarHTML(displayName, avatarColor, avatarUrl) {
+  if (avatarUrl) {
+    return `<img src="${avatarUrl}" class="avatar-img" alt="">`;
+  }
+  return getInitials(displayName);
+}
+
+function getAvatarStyle(avatarColor, avatarUrl) {
+  if (avatarUrl) return 'background:transparent';
+  return `background:${avatarColor}`;
+}
+
+function setAvatarElement(el, displayName, avatarColor, avatarUrl) {
+  if (avatarUrl) {
+    el.innerHTML = `<img src="${avatarUrl}" class="avatar-img" alt="">`;
+    el.style.background = 'transparent';
+  } else {
+    el.textContent = getInitials(displayName);
+    el.style.background = avatarColor || '#5B9BD5';
   }
 }
 
