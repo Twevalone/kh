@@ -273,7 +273,7 @@ io.on('connection', (socket) => {
   // Send message (text or voice)
   socket.on('message:send', async (data, callback) => {
     try {
-      const { chatId, text, type, audioData, audioDuration, replyToId, forwardedFrom } = data;
+      const { chatId, text, type, audioData, audioDuration, replyToId, forwardedFrom, forwardedFromId } = data;
 
       // Validate based on message type
       if (type === 'voice') {
@@ -289,7 +289,7 @@ io.on('connection', (socket) => {
       const messageId = uuidv4();
       const trimmedText = type === 'voice' ? null : text.trim();
 
-      await ops.createMessage(messageId, chatId, userId, trimmedText, type || 'text', audioData || null, audioDuration || null, replyToId || null, forwardedFrom || null);
+      await ops.createMessage(messageId, chatId, userId, trimmedText, type || 'text', audioData || null, audioDuration || null, replyToId || null, forwardedFrom || null, forwardedFromId || null);
 
       const sender = await ops.getUserById(userId);
 
@@ -307,6 +307,22 @@ io.on('connection', (socket) => {
         }
       }
 
+      // Build forward user info
+      let fwdUserInfo = {};
+      if (forwardedFromId) {
+        const fwdUser = await ops.getUserById(forwardedFromId);
+        if (fwdUser) {
+          fwdUserInfo = {
+            fwd_user_id: fwdUser.id,
+            fwd_username: fwdUser.username,
+            fwd_display_name: fwdUser.display_name,
+            fwd_avatar_color: fwdUser.avatar_color,
+            fwd_avatar_url: fwdUser.avatar_url,
+            fwd_is_online: fwdUser.is_online
+          };
+        }
+      }
+
       const message = {
         id: messageId,
         chat_id: chatId,
@@ -317,7 +333,9 @@ io.on('connection', (socket) => {
         audio_duration: audioDuration || null,
         reply_to_id: replyToId || null,
         forwarded_from: forwardedFrom || null,
+        forwarded_from_id: forwardedFromId || null,
         ...(replyInfo || {}),
+        ...fwdUserInfo,
         created_at: new Date().toISOString(),
         is_read: false,
         sender_username: sender?.username,

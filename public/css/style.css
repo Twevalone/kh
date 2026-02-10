@@ -1910,6 +1910,16 @@ button { cursor: pointer; }
   flex-shrink: 0;
 }
 
+.message-forward-label.clickable {
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.message-forward-label.clickable:hover {
+  opacity: 0.7;
+  text-decoration: underline;
+}
+
 /* ============ CONTEXT MENU ============ */
 .msg-context-menu {
   position: fixed;

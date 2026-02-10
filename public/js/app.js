@@ -566,11 +566,12 @@ function appendMessage(msg) {
       </div>`;
   }
 
-  // Forward label
+  // Forward label (clickable to open original sender's profile)
   let forwardHTML = '';
   if (msg.forwarded_from) {
+    const fwdClickable = msg.fwd_user_id ? ' clickable' : '';
     forwardHTML = `
-      <div class="message-forward-label">
+      <div class="message-forward-label${fwdClickable}" data-fwd-user-id="${msg.fwd_user_id || ''}" data-fwd-username="${escapeHtml(msg.fwd_username || '')}" data-fwd-name="${escapeHtml(msg.fwd_display_name || msg.forwarded_from)}" data-fwd-color="${msg.fwd_avatar_color || '#5B9BD5'}" data-fwd-avatar="${escapeHtml(msg.fwd_avatar_url || '')}" data-fwd-online="${msg.fwd_is_online || false}" data-fwd-lastseen="${msg.fwd_last_seen || ''}">
         <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
         Переслано от ${escapeHtml(msg.forwarded_from)}
       </div>`;
@@ -604,6 +605,7 @@ function appendMessage(msg) {
   const msgDiv = document.createElement('div');
   msgDiv.className = `message ${isMine ? 'message-out' : 'message-in'}`;
   msgDiv.dataset.id = msg.id;
+  msgDiv.dataset.senderId = msg.sender_id || '';
   msgDiv.dataset.sender = msg.sender_display_name || msg.sender_username || '';
   msgDiv.dataset.text = (msg.text || '').substring(0, 200);
   msgDiv.dataset.type = msg.type || 'text';
@@ -995,9 +997,19 @@ function showContextMenu(e, msgEl) {
   const msgType = msgEl.dataset.type;
   const msgText = msgEl.dataset.text;
   const msgSender = msgEl.dataset.sender;
+  const msgSenderId = msgEl.dataset.senderId;
+
+  // For voice forwarding, grab audio data from the voice player
+  let msgAudioData = null;
+  let msgAudioDuration = null;
+  const voicePlayer = msgEl.querySelector('.voice-player');
+  if (voicePlayer) {
+    msgAudioData = voicePlayer.dataset.audio || null;
+    msgAudioDuration = parseFloat(voicePlayer.dataset.duration) || null;
+  }
 
   state.contextMenuMsgId = msgId;
-  msgContextMenu._msgData = { id: msgId, type: msgType, text: msgText, sender: msgSender };
+  msgContextMenu._msgData = { id: msgId, type: msgType, text: msgText, sender: msgSender, senderId: msgSenderId, audioData: msgAudioData, audioDuration: msgAudioDuration };
 
   // Show/hide copy based on message type
   ctxCopy.style.display = msgType === 'voice' ? 'none' : 'flex';
@@ -1076,17 +1088,26 @@ function handleForwardSelect(chatId, targetUserId) {
   const fwd = state.forwardMsg;
   if (!fwd) return;
 
-  // If the selected chat is different from current, we need to open it first
   const targetChatId = chatId;
-  const text = fwd.type === 'voice' ? '🎤 Голосовое сообщение' : (fwd.text || '');
   const senderName = fwd.sender;
+  const senderId = fwd.senderId;
 
-  // Emit the message to the target chat with forwarded_from
-  state.socket.emit('message:send', {
+  const payload = {
     chatId: targetChatId,
-    text: text,
-    forwardedFrom: senderName
-  });
+    forwardedFrom: senderName,
+    forwardedFromId: senderId
+  };
+
+  // Forward voice messages with audio data intact
+  if (fwd.type === 'voice' && fwd.audioData) {
+    payload.type = 'voice';
+    payload.audioData = fwd.audioData;
+    payload.audioDuration = fwd.audioDuration;
+  } else {
+    payload.text = fwd.text || '';
+  }
+
+  state.socket.emit('message:send', payload);
 
   closeForwardModal();
 
@@ -1276,10 +1297,28 @@ function setupEventListeners() {
   messagesList.addEventListener('touchmove', onMsgTouchMove);
 
   // Click on reply inside message — scroll to original
+  // Click on forward label — open original sender's profile
   messagesList.addEventListener('click', (e) => {
     const replyEl = e.target.closest('.message-reply');
     if (replyEl) {
       scrollToMessage(replyEl.dataset.replyId);
+      return;
+    }
+
+    const fwdEl = e.target.closest('.message-forward-label.clickable');
+    if (fwdEl) {
+      const fwdUserId = fwdEl.dataset.fwdUserId;
+      if (fwdUserId) {
+        openUserProfile({
+          id: fwdUserId,
+          username: fwdEl.dataset.fwdUsername,
+          display_name: fwdEl.dataset.fwdName,
+          avatar_color: fwdEl.dataset.fwdColor,
+          avatar_url: fwdEl.dataset.fwdAvatar || null,
+          is_online: fwdEl.dataset.fwdOnline === 'true',
+          last_seen: fwdEl.dataset.fwdLastseen || null
+        });
+      }
     }
   });
 
