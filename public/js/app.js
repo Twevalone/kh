@@ -594,9 +594,18 @@ function linkify(text) {
   return text.replace(urlPattern, '<a href="$1" target="_blank" rel="noopener">$1</a>');
 }
 
+function parseDate(dateStr) {
+  if (!dateStr) return null;
+  // Handle both ISO format (PostgreSQL) and SQLite format
+  const d = new Date(dateStr);
+  if (!isNaN(d)) return d;
+  // Fallback for SQLite "YYYY-MM-DD HH:MM:SS" format
+  return new Date(dateStr.replace(' ', 'T') + 'Z');
+}
+
 function formatTime(dateStr) {
-  if (!dateStr) return '';
-  const date = new Date(dateStr.replace(' ', 'T') + 'Z');
+  const date = parseDate(dateStr);
+  if (!date) return '';
   const now = new Date();
   const diff = now - date;
   const oneDay = 86400000;
@@ -611,14 +620,14 @@ function formatTime(dateStr) {
 }
 
 function formatMessageTime(dateStr) {
-  if (!dateStr) return '';
-  const date = new Date(dateStr.replace(' ', 'T') + 'Z');
+  const date = parseDate(dateStr);
+  if (!date) return '';
   return date.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
 }
 
 function formatDate(dateStr) {
-  if (!dateStr) return '';
-  const date = new Date(dateStr.replace(' ', 'T') + 'Z');
+  const date = parseDate(dateStr);
+  if (!date) return '';
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const yesterday = new Date(today - 86400000);
@@ -630,8 +639,8 @@ function formatDate(dateStr) {
 }
 
 function formatLastSeen(dateStr) {
-  if (!dateStr) return '';
-  const date = new Date(dateStr.replace(' ', 'T') + 'Z');
+  const date = parseDate(dateStr);
+  if (!date) return '';
   const now = new Date();
   const diff = (now - date) / 1000;
 

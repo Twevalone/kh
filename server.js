@@ -41,7 +41,7 @@ app.post('/api/register', async (req, res) => {
       return res.status(400).json({ error: 'Пароль минимум 4 символа' });
     }
 
-    const existing = ops.getUserByUsername(username.toLowerCase());
+    const existing = await ops.getUserByUsername(username.toLowerCase());
     if (existing) {
       return res.status(400).json({ error: 'Имя пользователя занято' });
     }
@@ -50,7 +50,7 @@ app.post('/api/register', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
     const avatarColor = getRandomColor();
 
-    ops.createUser(id, username.toLowerCase(), displayName, passwordHash, avatarColor);
+    await ops.createUser(id, username.toLowerCase(), displayName, passwordHash, avatarColor);
 
     const token = jwt.sign({ userId: id }, JWT_SECRET, { expiresIn: '30d' });
 
@@ -73,7 +73,7 @@ app.post('/api/login', async (req, res) => {
       return res.status(400).json({ error: 'Введите имя пользователя и пароль' });
     }
 
-    const user = ops.getUserByUsername(username.toLowerCase());
+    const user = await ops.getUserByUsername(username.toLowerCase());
     if (!user) {
       return res.status(400).json({ error: 'Пользователь не найден' });
     }
@@ -130,115 +130,148 @@ io.on('connection', (socket) => {
     onlineUsers.set(userId, new Set());
   }
   onlineUsers.get(userId).add(socket.id);
-  ops.setUserOnline(userId);
+  ops.setUserOnline(userId).catch(console.error);
 
   // Broadcast online status
   io.emit('user:online', { userId });
 
   // Get user info
-  socket.on('user:me', (callback) => {
-    const user = ops.getUserById(userId);
-    callback(user);
+  socket.on('user:me', async (callback) => {
+    try {
+      const user = await ops.getUserById(userId);
+      callback(user);
+    } catch (err) {
+      console.error('user:me error:', err);
+      callback(null);
+    }
   });
 
   // Search users
-  socket.on('users:search', (query, callback) => {
-    const users = ops.searchUsers(query, userId);
-    callback(users);
+  socket.on('users:search', async (query, callback) => {
+    try {
+      const users = await ops.searchUsers(query, userId);
+      callback(users);
+    } catch (err) {
+      console.error('users:search error:', err);
+      callback([]);
+    }
   });
 
   // Get chat list
-  socket.on('chats:list', (callback) => {
-    const chats = ops.getUserChats(userId);
-    callback(chats);
+  socket.on('chats:list', async (callback) => {
+    try {
+      const chats = await ops.getUserChats(userId);
+      callback(chats);
+    } catch (err) {
+      console.error('chats:list error:', err);
+      callback([]);
+    }
   });
 
   // Start or get a private chat
-  socket.on('chat:start', (otherUserId, callback) => {
-    let chat = ops.findPrivateChat(userId, otherUserId);
+  socket.on('chat:start', async (otherUserId, callback) => {
+    try {
+      let chat = await ops.findPrivateChat(userId, otherUserId);
 
-    if (!chat) {
-      const chatId = uuidv4();
-      ops.createChat(chatId, 'private');
-      ops.addChatMember(chatId, userId);
-      ops.addChatMember(chatId, otherUserId);
-      chat = { chat_id: chatId };
+      if (!chat) {
+        const chatId = uuidv4();
+        await ops.createChat(chatId, 'private');
+        await ops.addChatMember(chatId, userId);
+        await ops.addChatMember(chatId, otherUserId);
+        chat = { chat_id: chatId };
+      }
+
+      const otherUser = await ops.getUserById(otherUserId);
+      const messages = await ops.getChatMessages(chat.chat_id);
+
+      // Mark messages as read
+      await ops.markMessagesAsRead(chat.chat_id, userId);
+
+      // Join the socket room
+      socket.join(chat.chat_id);
+
+      callback({
+        chatId: chat.chat_id,
+        otherUser,
+        messages
+      });
+    } catch (err) {
+      console.error('chat:start error:', err);
+      callback({ chatId: null, otherUser: null, messages: [] });
     }
-
-    const otherUser = ops.getUserById(otherUserId);
-    const messages = ops.getChatMessages(chat.chat_id);
-
-    // Mark messages as read
-    ops.markMessagesAsRead(chat.chat_id, userId);
-
-    // Join the socket room
-    socket.join(chat.chat_id);
-
-    callback({
-      chatId: chat.chat_id,
-      otherUser,
-      messages
-    });
   });
 
   // Open existing chat
-  socket.on('chat:open', (chatId, callback) => {
-    const messages = ops.getChatMessages(chatId);
-    ops.markMessagesAsRead(chatId, userId);
+  socket.on('chat:open', async (chatId, callback) => {
+    try {
+      const messages = await ops.getChatMessages(chatId);
+      await ops.markMessagesAsRead(chatId, userId);
 
-    socket.join(chatId);
+      socket.join(chatId);
 
-    // Notify sender that messages were read
-    socket.to(chatId).emit('messages:read', { chatId, readBy: userId });
+      // Notify sender that messages were read
+      socket.to(chatId).emit('messages:read', { chatId, readBy: userId });
 
-    callback({ messages });
+      callback({ messages });
+    } catch (err) {
+      console.error('chat:open error:', err);
+      callback({ messages: [] });
+    }
   });
 
   // Send message
-  socket.on('message:send', (data, callback) => {
-    const { chatId, text } = data;
+  socket.on('message:send', async (data, callback) => {
+    try {
+      const { chatId, text } = data;
 
-    if (!text || !text.trim()) return;
+      if (!text || !text.trim()) return;
 
-    const messageId = uuidv4();
-    const trimmedText = text.trim();
+      const messageId = uuidv4();
+      const trimmedText = text.trim();
 
-    ops.createMessage(messageId, chatId, userId, trimmedText);
+      await ops.createMessage(messageId, chatId, userId, trimmedText);
 
-    const sender = ops.getUserById(userId);
-    const message = {
-      id: messageId,
-      chat_id: chatId,
-      sender_id: userId,
-      text: trimmedText,
-      created_at: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      is_read: 0,
-      sender_username: sender?.username,
-      sender_display_name: sender?.display_name,
-      sender_avatar_color: sender?.avatar_color
-    };
+      const sender = await ops.getUserById(userId);
+      const message = {
+        id: messageId,
+        chat_id: chatId,
+        sender_id: userId,
+        text: trimmedText,
+        created_at: new Date().toISOString(),
+        is_read: false,
+        sender_username: sender?.username,
+        sender_display_name: sender?.display_name,
+        sender_avatar_color: sender?.avatar_color
+      };
 
-    // Send to all in room
-    io.to(chatId).emit('message:new', message);
+      // Send to all in room
+      io.to(chatId).emit('message:new', message);
 
-    // Notify other members to refresh chat list
-    const chatMembers = ops.getChatMembersExcept(chatId, userId);
-    chatMembers.forEach(member => {
-      const memberSockets = onlineUsers.get(member.user_id);
-      if (memberSockets) {
-        memberSockets.forEach(sid => {
-          io.to(sid).emit('chats:updated');
-        });
-      }
-    });
+      // Notify other members to refresh chat list
+      const chatMembers = await ops.getChatMembersExcept(chatId, userId);
+      chatMembers.forEach(member => {
+        const memberSockets = onlineUsers.get(member.user_id);
+        if (memberSockets) {
+          memberSockets.forEach(sid => {
+            io.to(sid).emit('chats:updated');
+          });
+        }
+      });
 
-    if (callback) callback(message);
+      if (callback) callback(message);
+    } catch (err) {
+      console.error('message:send error:', err);
+    }
   });
 
   // Mark messages as read
-  socket.on('messages:markRead', (chatId) => {
-    ops.markMessagesAsRead(chatId, userId);
-    socket.to(chatId).emit('messages:read', { chatId, readBy: userId });
+  socket.on('messages:markRead', async (chatId) => {
+    try {
+      await ops.markMessagesAsRead(chatId, userId);
+      socket.to(chatId).emit('messages:read', { chatId, readBy: userId });
+    } catch (err) {
+      console.error('messages:markRead error:', err);
+    }
   });
 
   // Typing indicator
@@ -259,7 +292,7 @@ io.on('connection', (socket) => {
       userSockets.delete(socket.id);
       if (userSockets.size === 0) {
         onlineUsers.delete(userId);
-        ops.setUserOffline(userId);
+        ops.setUserOffline(userId).catch(console.error);
         io.emit('user:offline', { userId });
       }
     }
