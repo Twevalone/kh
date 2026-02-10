@@ -1646,3 +1646,150 @@ button { cursor: pointer; }
 .profile-avatar.has-image:hover {
   opacity: 0.85;
 }
+
+/* ============ CALL SCREENS ============ */
+.call-screen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: callFadeIn 0.3s ease;
+}
+
+@keyframes callFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.call-screen-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+}
+
+.call-screen-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 40px;
+}
+
+.call-avatar {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 42px;
+  font-weight: 600;
+  color: white;
+  margin-bottom: 8px;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.call-name {
+  font-size: 24px;
+  font-weight: 600;
+  color: white;
+}
+
+.call-status {
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 40px;
+}
+
+.call-actions {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+}
+
+.call-actions-incoming {
+  gap: 60px;
+}
+
+.call-action-btn {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s, opacity 0.15s;
+}
+
+.call-action-btn:hover {
+  transform: scale(1.1);
+}
+
+.call-action-btn:active {
+  transform: scale(0.95);
+}
+
+.call-end,
+.call-reject {
+  background: #FF3B30;
+}
+
+.call-accept {
+  background: #34C759;
+}
+
+.call-mute,
+.call-speaker {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.call-mute.active,
+.call-speaker.active {
+  background: white;
+}
+
+.call-mute.active svg path,
+.call-speaker.active svg path {
+  fill: #1a1a2e;
+}
+
+/* Incoming call pulse animation on accept button */
+.call-accept {
+  animation: callPulseGreen 2s infinite;
+}
+
+@keyframes callPulseGreen {
+  0% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.5); }
+  70% { box-shadow: 0 0 0 16px rgba(52, 199, 89, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0); }
+}
+
+/* Outgoing call — ringing dots animation */
+.call-status {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Call button in header */
+#call-btn {
+  color: var(--text-secondary);
+  transition: color 0.2s;
+}
+
+#call-btn:hover {
+  color: var(--accent);
+}

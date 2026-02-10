@@ -16,6 +16,15 @@ const state = {
   recordingStartTime: null,
   recordingTimer: null,
   isRecording: false,
+  // Call
+  callState: 'idle', // idle | outgoing | incoming | active
+  callPeer: null,     // { id, name, avatarColor, avatarUrl }
+  peerConnection: null,
+  localStream: null,
+  callTimer: null,
+  callStartTime: null,
+  isMuted: false,
+  isSpeaker: false,
 };
 
 // ============ DOM ELEMENTS ============
@@ -271,13 +280,69 @@ function connectSocket() {
 
   // Avatar updated by another user
   state.socket.on('user:avatar-updated', ({ userId, avatarUrl }) => {
-    // Update current chat header if it's this user
     if (state.currentOtherUser && state.currentOtherUser.id === userId) {
       state.currentOtherUser.avatar_url = avatarUrl;
       setAvatarElement(chatAvatar, state.currentOtherUser.display_name, state.currentOtherUser.avatar_color, avatarUrl);
     }
-    // Refresh chat list to show updated avatars
     loadChats();
+  });
+
+  // ---- Call signaling ----
+  state.socket.on('call:incoming', ({ callerId, callerName, callerAvatarColor, callerAvatarUrl }) => {
+    // Ignore if already in a call
+    if (state.callState !== 'idle') return;
+    state.callPeer = { id: callerId, name: callerName, avatarColor: callerAvatarColor, avatarUrl: callerAvatarUrl };
+    showIncomingCall();
+  });
+
+  state.socket.on('call:accepted', () => {
+    if (state.callState !== 'outgoing') return;
+    // Callee accepted — start WebRTC
+    startWebRTC(true); // true = we are the caller (create offer)
+  });
+
+  state.socket.on('call:rejected', () => {
+    if (state.callState === 'outgoing') {
+      endCallCleanup();
+      showCallToast('Звонок отклонён');
+    }
+  });
+
+  state.socket.on('call:ended', ({ by }) => {
+    if (state.callPeer && state.callPeer.id === by) {
+      endCallCleanup();
+      showCallToast('Звонок завершён');
+    }
+  });
+
+  state.socket.on('call:offer', async ({ from, offer }) => {
+    if (state.callState !== 'active' || !state.peerConnection) return;
+    try {
+      await state.peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await state.peerConnection.createAnswer();
+      await state.peerConnection.setLocalDescription(answer);
+      state.socket.emit('call:answer', { targetUserId: from, answer });
+    } catch (err) {
+      console.error('Error handling offer:', err);
+    }
+  });
+
+  state.socket.on('call:answer', async ({ from, answer }) => {
+    if (!state.peerConnection) return;
+    try {
+      await state.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+    } catch (err) {
+      console.error('Error handling answer:', err);
+    }
+  });
+
+  state.socket.on('call:ice-candidate', async ({ from, candidate }) => {
+    if (!state.peerConnection) return;
+    try {
+      await state.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (err) {
+      console.error('Error adding ICE candidate:', err);
+    }
   });
 }
 
@@ -952,6 +1017,15 @@ function setupEventListeners() {
     }
   });
 
+  // Call buttons
+  $('#call-btn').addEventListener('click', initiateCall);
+  $('#call-out-cancel').addEventListener('click', cancelOutgoingCall);
+  $('#call-in-accept').addEventListener('click', acceptCall);
+  $('#call-in-reject').addEventListener('click', rejectCall);
+  $('#call-end').addEventListener('click', endActiveCall);
+  callMuteBtn.addEventListener('click', toggleMute);
+  callSpeakerBtn.addEventListener('click', toggleSpeaker);
+
   // Voice recording
   micBtn.addEventListener('click', () => {
     if (!state.currentChatId) return;
@@ -1025,6 +1099,304 @@ function updateSendButton() {
     sendBtn.classList.remove('active');
     inputArea.classList.remove('has-text');
   }
+}
+
+// ============ VOICE CALLS ============
+const ICE_SERVERS = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' }
+  ]
+};
+
+const callOutgoing = $('#call-outgoing');
+const callIncoming = $('#call-incoming');
+const callActive = $('#call-active');
+const callOutAvatar = $('#call-out-avatar');
+const callOutName = $('#call-out-name');
+const callOutStatus = $('#call-out-status');
+const callInAvatar = $('#call-in-avatar');
+const callInName = $('#call-in-name');
+const callActiveAvatar = $('#call-active-avatar');
+const callActiveName = $('#call-active-name');
+const callActiveTimer = $('#call-active-timer');
+const callMuteBtn = $('#call-mute');
+const callSpeakerBtn = $('#call-speaker');
+
+function initiateCall() {
+  if (!state.currentOtherUser || state.callState !== 'idle') return;
+  if (!state.socket || !state.socket.connected) return;
+
+  const user = state.currentOtherUser;
+  state.callPeer = {
+    id: user.id,
+    name: user.display_name,
+    avatarColor: user.avatar_color,
+    avatarUrl: user.avatar_url || null
+  };
+  state.callState = 'outgoing';
+
+  state.socket.emit('call:initiate', { targetUserId: user.id }, (res) => {
+    if (res && res.error) {
+      state.callState = 'idle';
+      state.callPeer = null;
+      showCallToast(res.error);
+      return;
+    }
+    showOutgoingCall();
+  });
+}
+
+function showOutgoingCall() {
+  setAvatarElement(callOutAvatar, state.callPeer.name, state.callPeer.avatarColor, state.callPeer.avatarUrl);
+  callOutName.textContent = state.callPeer.name;
+  callOutStatus.textContent = 'Вызов...';
+  callOutgoing.style.display = 'flex';
+}
+
+function showIncomingCall() {
+  state.callState = 'incoming';
+  setAvatarElement(callInAvatar, state.callPeer.name, state.callPeer.avatarColor, state.callPeer.avatarUrl);
+  callInName.textContent = state.callPeer.name;
+  callIncoming.style.display = 'flex';
+
+  // Play ringtone using Web Audio API
+  playRingtone();
+}
+
+function acceptCall() {
+  if (state.callState !== 'incoming') return;
+  stopRingtone();
+  state.socket.emit('call:accept', { targetUserId: state.callPeer.id });
+  callIncoming.style.display = 'none';
+  // Start WebRTC as callee (wait for offer)
+  startWebRTC(false);
+}
+
+function rejectCall() {
+  if (state.callState !== 'incoming') return;
+  stopRingtone();
+  state.socket.emit('call:reject', { targetUserId: state.callPeer.id });
+  endCallCleanup();
+}
+
+function cancelOutgoingCall() {
+  if (state.callState !== 'outgoing') return;
+  state.socket.emit('call:end', { targetUserId: state.callPeer.id });
+  endCallCleanup();
+}
+
+function endActiveCall() {
+  if (state.callState !== 'active' && state.callState !== 'outgoing') return;
+  state.socket.emit('call:end', { targetUserId: state.callPeer.id });
+  endCallCleanup();
+}
+
+async function startWebRTC(isCaller) {
+  try {
+    // Get microphone
+    state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    // Create peer connection
+    state.peerConnection = new RTCPeerConnection(ICE_SERVERS);
+
+    // Add local audio tracks
+    state.localStream.getTracks().forEach(track => {
+      state.peerConnection.addTrack(track, state.localStream);
+    });
+
+    // Handle remote stream
+    state.peerConnection.ontrack = (event) => {
+      const remoteAudio = new Audio();
+      remoteAudio.srcObject = event.streams[0];
+      remoteAudio.id = 'remote-audio';
+      remoteAudio.autoplay = true;
+      document.body.appendChild(remoteAudio);
+    };
+
+    // ICE candidates
+    state.peerConnection.onicecandidate = (event) => {
+      if (event.candidate && state.callPeer) {
+        state.socket.emit('call:ice-candidate', {
+          targetUserId: state.callPeer.id,
+          candidate: event.candidate
+        });
+      }
+    };
+
+    // Connection state
+    state.peerConnection.onconnectionstatechange = () => {
+      const cs = state.peerConnection?.connectionState;
+      console.log('WebRTC connection state:', cs);
+      if (cs === 'connected') {
+        callActiveTimer.textContent = '00:00';
+      }
+      if (cs === 'disconnected' || cs === 'failed' || cs === 'closed') {
+        if (state.callState === 'active') {
+          endActiveCall();
+          showCallToast('Соединение потеряно');
+        }
+      }
+    };
+
+    // Show active call UI
+    showActiveCall();
+
+    if (isCaller) {
+      // Create and send offer
+      const offer = await state.peerConnection.createOffer();
+      await state.peerConnection.setLocalDescription(offer);
+      state.socket.emit('call:offer', {
+        targetUserId: state.callPeer.id,
+        offer
+      });
+    }
+
+  } catch (err) {
+    console.error('WebRTC error:', err);
+    endActiveCall();
+    showCallToast('Не удалось начать звонок');
+  }
+}
+
+function showActiveCall() {
+  state.callState = 'active';
+  callOutgoing.style.display = 'none';
+  callIncoming.style.display = 'none';
+
+  setAvatarElement(callActiveAvatar, state.callPeer.name, state.callPeer.avatarColor, state.callPeer.avatarUrl);
+  callActiveName.textContent = state.callPeer.name;
+
+  // Start timer
+  state.callStartTime = Date.now();
+  state.callTimer = setInterval(updateCallTimer, 1000);
+  callActiveTimer.textContent = '00:00';
+
+  // Reset mute/speaker state
+  state.isMuted = false;
+  state.isSpeaker = false;
+  callMuteBtn.classList.remove('active');
+  callSpeakerBtn.classList.remove('active');
+
+  callActive.style.display = 'flex';
+}
+
+function updateCallTimer() {
+  if (!state.callStartTime) return;
+  const elapsed = Math.floor((Date.now() - state.callStartTime) / 1000);
+  const mins = Math.floor(elapsed / 60).toString().padStart(2, '0');
+  const secs = (elapsed % 60).toString().padStart(2, '0');
+  callActiveTimer.textContent = `${mins}:${secs}`;
+}
+
+function endCallCleanup() {
+  stopRingtone();
+
+  // Close peer connection
+  if (state.peerConnection) {
+    state.peerConnection.close();
+    state.peerConnection = null;
+  }
+
+  // Stop local stream
+  if (state.localStream) {
+    state.localStream.getTracks().forEach(t => t.stop());
+    state.localStream = null;
+  }
+
+  // Remove remote audio
+  const remoteAudio = document.getElementById('remote-audio');
+  if (remoteAudio) remoteAudio.remove();
+
+  // Clear timer
+  if (state.callTimer) {
+    clearInterval(state.callTimer);
+    state.callTimer = null;
+  }
+
+  // Reset state
+  state.callState = 'idle';
+  state.callPeer = null;
+  state.callStartTime = null;
+  state.isMuted = false;
+  state.isSpeaker = false;
+
+  // Hide all call screens
+  callOutgoing.style.display = 'none';
+  callIncoming.style.display = 'none';
+  callActive.style.display = 'none';
+}
+
+function toggleMute() {
+  if (!state.localStream) return;
+  state.isMuted = !state.isMuted;
+  state.localStream.getAudioTracks().forEach(t => { t.enabled = !state.isMuted; });
+  callMuteBtn.classList.toggle('active', state.isMuted);
+}
+
+function toggleSpeaker() {
+  // Toggle speaker is mostly a visual indicator on desktop
+  // On mobile it could use setSinkId but browser support varies
+  state.isSpeaker = !state.isSpeaker;
+  callSpeakerBtn.classList.toggle('active', state.isSpeaker);
+  const remoteAudio = document.getElementById('remote-audio');
+  if (remoteAudio) {
+    remoteAudio.volume = state.isSpeaker ? 1.0 : 0.7;
+  }
+}
+
+// Simple ringtone using Web Audio API
+let ringtoneCtx = null;
+let ringtoneInterval = null;
+
+function playRingtone() {
+  try {
+    ringtoneCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function beep() {
+      if (!ringtoneCtx) return;
+      const osc = ringtoneCtx.createOscillator();
+      const gain = ringtoneCtx.createGain();
+      osc.connect(gain);
+      gain.connect(ringtoneCtx.destination);
+      osc.frequency.value = 440;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.3, ringtoneCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ringtoneCtx.currentTime + 0.5);
+      osc.start(ringtoneCtx.currentTime);
+      osc.stop(ringtoneCtx.currentTime + 0.5);
+    }
+    beep();
+    ringtoneInterval = setInterval(beep, 2000);
+  } catch (e) {
+    console.log('Ringtone not supported');
+  }
+}
+
+function stopRingtone() {
+  if (ringtoneInterval) {
+    clearInterval(ringtoneInterval);
+    ringtoneInterval = null;
+  }
+  if (ringtoneCtx) {
+    ringtoneCtx.close().catch(() => {});
+    ringtoneCtx = null;
+  }
+}
+
+function showCallToast(message) {
+  // Simple toast notification
+  const toast = document.createElement('div');
+  toast.textContent = message;
+  toast.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.8);color:white;padding:10px 24px;border-radius:20px;font-size:14px;z-index:4000;animation:callFadeIn 0.3s ease;';
+  document.body.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transition = 'opacity 0.3s';
+    setTimeout(() => toast.remove(), 300);
+  }, 2500);
 }
 
 // ============ VOICE RECORDING ============

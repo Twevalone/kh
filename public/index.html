@@ -192,8 +192,8 @@
               <div class="chat-header-status" id="chat-status"></div>
             </div>
             <div class="chat-header-actions">
-              <button class="icon-btn" title="Поиск">
-                <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+              <button class="icon-btn" id="call-btn" title="Позвонить">
+                <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-1.57 1.97c-2.83-1.35-5.48-3.9-6.89-6.83l1.95-1.66c.27-.28.35-.67.24-1.02-.37-1.11-.56-2.3-.56-3.53 0-.54-.45-.99-.99-.99H4.19C3.65 3 3 3.24 3 3.99 3 13.28 10.73 21 20.01 21c.71 0 .99-.63.99-1.18v-3.45c0-.54-.45-.99-.99-.99z"/></svg>
               </button>
               <button class="icon-btn" title="Ещё">
                 <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
@@ -272,6 +272,60 @@
             <span>Написать</span>
           </button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Call: Outgoing -->
+  <div id="call-outgoing" class="call-screen" style="display:none">
+    <div class="call-screen-bg"></div>
+    <div class="call-screen-content">
+      <div class="call-avatar" id="call-out-avatar"></div>
+      <div class="call-name" id="call-out-name"></div>
+      <div class="call-status" id="call-out-status">Вызов...</div>
+      <div class="call-actions">
+        <button class="call-action-btn call-end" id="call-out-cancel" title="Отмена">
+          <svg viewBox="0 0 24 24" width="30" height="30"><path fill="white" d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 010-1.36C3.69 8.68 7.61 7 12 7s8.31 1.68 11.71 4.72c.18.18.29.44.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 00-2.67-1.85.996.996 0 01-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Call: Incoming -->
+  <div id="call-incoming" class="call-screen" style="display:none">
+    <div class="call-screen-bg"></div>
+    <div class="call-screen-content">
+      <div class="call-avatar" id="call-in-avatar"></div>
+      <div class="call-name" id="call-in-name"></div>
+      <div class="call-status">Входящий звонок...</div>
+      <div class="call-actions call-actions-incoming">
+        <button class="call-action-btn call-reject" id="call-in-reject" title="Отклонить">
+          <svg viewBox="0 0 24 24" width="30" height="30"><path fill="white" d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 010-1.36C3.69 8.68 7.61 7 12 7s8.31 1.68 11.71 4.72c.18.18.29.44.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 00-2.67-1.85.996.996 0 01-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
+        </button>
+        <button class="call-action-btn call-accept" id="call-in-accept" title="Принять">
+          <svg viewBox="0 0 24 24" width="30" height="30"><path fill="white" d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-1.57 1.97c-2.83-1.35-5.48-3.9-6.89-6.83l1.95-1.66c.27-.28.35-.67.24-1.02-.37-1.11-.56-2.3-.56-3.53 0-.54-.45-.99-.99-.99H4.19C3.65 3 3 3.24 3 3.99 3 13.28 10.73 21 20.01 21c.71 0 .99-.63.99-1.18v-3.45c0-.54-.45-.99-.99-.99z"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Call: Active -->
+  <div id="call-active" class="call-screen" style="display:none">
+    <div class="call-screen-bg"></div>
+    <div class="call-screen-content">
+      <div class="call-avatar" id="call-active-avatar"></div>
+      <div class="call-name" id="call-active-name"></div>
+      <div class="call-status" id="call-active-timer">00:00</div>
+      <div class="call-actions">
+        <button class="call-action-btn call-mute" id="call-mute" title="Микрофон">
+          <svg class="call-mute-icon" viewBox="0 0 24 24" width="26" height="26"><path fill="white" d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+        </button>
+        <button class="call-action-btn call-end" id="call-end" title="Завершить">
+          <svg viewBox="0 0 24 24" width="30" height="30"><path fill="white" d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 010-1.36C3.69 8.68 7.61 7 12 7s8.31 1.68 11.71 4.72c.18.18.29.44.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 00-2.67-1.85.996.996 0 01-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
+        </button>
+        <button class="call-action-btn call-speaker" id="call-speaker" title="Динамик">
+          <svg class="call-speaker-icon" viewBox="0 0 24 24" width="26" height="26"><path fill="white" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+        </button>
       </div>
     </div>
   </div>

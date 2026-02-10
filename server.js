@@ -345,6 +345,73 @@ io.on('connection', (socket) => {
     socket.broadcast.emit('user:avatar-updated', { userId, avatarUrl });
   });
 
+  // ---- VOICE CALLS (signaling) ----
+  socket.on('call:initiate', async ({ targetUserId }, callback) => {
+    try {
+      const caller = await ops.getUserById(userId);
+      const targetSockets = onlineUsers.get(targetUserId);
+      if (!targetSockets || targetSockets.size === 0) {
+        if (callback) callback({ error: 'Пользователь не в сети' });
+        return;
+      }
+      // Send incoming call to all sockets of the target user
+      targetSockets.forEach(sid => {
+        io.to(sid).emit('call:incoming', {
+          callerId: userId,
+          callerName: caller?.display_name || 'Unknown',
+          callerAvatarColor: caller?.avatar_color,
+          callerAvatarUrl: caller?.avatar_url || null
+        });
+      });
+      if (callback) callback({ ok: true });
+    } catch (err) {
+      console.error('call:initiate error:', err);
+      if (callback) callback({ error: 'Ошибка сервера' });
+    }
+  });
+
+  socket.on('call:accept', ({ targetUserId }) => {
+    const targetSockets = onlineUsers.get(targetUserId);
+    if (targetSockets) {
+      targetSockets.forEach(sid => io.to(sid).emit('call:accepted', { by: userId }));
+    }
+  });
+
+  socket.on('call:reject', ({ targetUserId }) => {
+    const targetSockets = onlineUsers.get(targetUserId);
+    if (targetSockets) {
+      targetSockets.forEach(sid => io.to(sid).emit('call:rejected', { by: userId }));
+    }
+  });
+
+  socket.on('call:end', ({ targetUserId }) => {
+    const targetSockets = onlineUsers.get(targetUserId);
+    if (targetSockets) {
+      targetSockets.forEach(sid => io.to(sid).emit('call:ended', { by: userId }));
+    }
+  });
+
+  socket.on('call:offer', ({ targetUserId, offer }) => {
+    const targetSockets = onlineUsers.get(targetUserId);
+    if (targetSockets) {
+      targetSockets.forEach(sid => io.to(sid).emit('call:offer', { from: userId, offer }));
+    }
+  });
+
+  socket.on('call:answer', ({ targetUserId, answer }) => {
+    const targetSockets = onlineUsers.get(targetUserId);
+    if (targetSockets) {
+      targetSockets.forEach(sid => io.to(sid).emit('call:answer', { from: userId, answer }));
+    }
+  });
+
+  socket.on('call:ice-candidate', ({ targetUserId, candidate }) => {
+    const targetSockets = onlineUsers.get(targetUserId);
+    if (targetSockets) {
+      targetSockets.forEach(sid => io.to(sid).emit('call:ice-candidate', { from: userId, candidate }));
+    }
+  });
+
   // Typing indicator
   socket.on('typing:start', (chatId) => {
     socket.to(chatId).emit('typing:start', { chatId, userId });
@@ -365,6 +432,8 @@ io.on('connection', (socket) => {
         onlineUsers.delete(userId);
         ops.setUserOffline(userId).catch(console.error);
         io.emit('user:offline', { userId });
+        // End any ongoing call — broadcast to all in case someone was in call with this user
+        io.emit('call:ended', { by: userId });
       }
     }
   });
