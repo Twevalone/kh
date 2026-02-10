@@ -603,6 +603,59 @@ function toggleEmojiPicker() {
   emojiPicker.style.display = isOpen ? 'none' : 'flex';
 }
 
+// ============ SIDE MENU ============
+const sideMenu = $('#side-menu');
+const sideMenuOverlay = $('#side-menu-overlay');
+const menuBtn = $('#menu-btn');
+const menuAvatar = $('#menu-avatar');
+const menuName = $('#menu-name');
+const menuUsername = $('#menu-username');
+
+const profileModal = $('#profile-modal');
+const profileAvatar = $('#profile-avatar');
+const profileDisplayName = $('#profile-display-name');
+const profileUsername = $('#profile-username');
+const profileId = $('#profile-id');
+
+const settingsModal = $('#settings-modal');
+
+function openSideMenu() {
+  if (!state.user) return;
+  // Fill user info
+  const initials = getInitials(state.user.displayName || state.user.display_name || '?');
+  menuAvatar.textContent = initials;
+  menuAvatar.style.background = state.user.avatarColor || state.user.avatar_color || '#5B9BD5';
+  menuName.textContent = state.user.displayName || state.user.display_name || '';
+  menuUsername.textContent = '@' + (state.user.username || '');
+
+  sideMenuOverlay.style.display = 'block';
+  requestAnimationFrame(() => sideMenu.classList.add('open'));
+}
+
+function closeSideMenu() {
+  sideMenu.classList.remove('open');
+  setTimeout(() => { sideMenuOverlay.style.display = 'none'; }, 250);
+}
+
+function openProfileModal() {
+  closeSideMenu();
+  if (!state.user) return;
+
+  const initials = getInitials(state.user.displayName || state.user.display_name || '?');
+  profileAvatar.textContent = initials;
+  profileAvatar.style.background = state.user.avatarColor || state.user.avatar_color || '#5B9BD5';
+  profileDisplayName.textContent = state.user.displayName || state.user.display_name || '';
+  profileUsername.textContent = '@' + (state.user.username || '');
+  profileId.textContent = state.user.id || '';
+
+  profileModal.style.display = 'flex';
+}
+
+function openSettingsModal() {
+  closeSideMenu();
+  settingsModal.style.display = 'flex';
+}
+
 // ============ EVENT LISTENERS ============
 function setupEventListeners() {
   // Auth
@@ -611,6 +664,27 @@ function setupEventListeners() {
     e.preventDefault();
     toggleAuthMode();
   });
+
+  // Side menu
+  menuBtn.addEventListener('click', openSideMenu);
+  sideMenuOverlay.addEventListener('click', closeSideMenu);
+
+  $('#menu-profile').addEventListener('click', openProfileModal);
+  $('#menu-settings').addEventListener('click', openSettingsModal);
+  $('#menu-contacts').addEventListener('click', () => {
+    closeSideMenu();
+    searchInput.focus();
+  });
+  $('#menu-logout').addEventListener('click', () => {
+    closeSideMenu();
+    logout();
+  });
+
+  // Close modals
+  $('#profile-close').addEventListener('click', () => { profileModal.style.display = 'none'; });
+  $('#settings-close').addEventListener('click', () => { settingsModal.style.display = 'none'; });
+  profileModal.addEventListener('click', (e) => { if (e.target === profileModal) profileModal.style.display = 'none'; });
+  settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal) settingsModal.style.display = 'none'; });
 
   // Search
   searchInput.addEventListener('input', (e) => {
