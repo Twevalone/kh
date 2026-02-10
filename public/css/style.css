@@ -643,16 +643,17 @@ button { cursor: pointer; }
 
 .message-check {
   display: flex;
-  color: rgba(255, 255, 255, 0.5);
+  align-items: center;
+  color: rgba(255, 255, 255, 0.4);
 }
 
 .message-check.read {
-  color: var(--accent);
+  color: #5EB5F7;
 }
 
 .message-check svg {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
 }
 
 /* Date separator */

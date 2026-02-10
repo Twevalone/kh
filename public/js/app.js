@@ -214,11 +214,16 @@ function connectSocket() {
     loadChats();
   });
 
-  // Messages read
+  // Messages read — update single checks to double checks
   state.socket.on('messages:read', ({ chatId, readBy }) => {
     if (chatId === state.currentChatId && readBy !== state.user.id) {
-      document.querySelectorAll('.message-out .message-check').forEach(el => {
+      document.querySelectorAll('.message-out .message-check:not(.read)').forEach(el => {
         el.classList.add('read');
+        el.innerHTML = `
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="1 12 5 16 12 6"/>
+            <polyline points="7 12 11 16 18 6"/>
+          </svg>`;
       });
     }
     loadChats();
@@ -420,11 +425,25 @@ function appendMessage(msg) {
   const isMine = msg.sender_id === state.user.id;
   const time = formatMessageTime(msg.created_at);
 
-  const checkSvg = isMine ? `
-    <span class="message-check ${msg.is_read ? 'read' : ''}">
-      <svg viewBox="0 0 16 16"><path fill="currentColor" d="M1.5 8.5l3 3 7-7" stroke="currentColor" stroke-width="1.5" fill="none"/><path fill="currentColor" d="M5.5 8.5l3 3 7-7" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
-    </span>
-  ` : '';
+  let checkSvg = '';
+  if (isMine) {
+    if (msg.is_read) {
+      // Double check — read
+      checkSvg = `<span class="message-check read">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="1 12 5 16 12 6"/>
+          <polyline points="7 12 11 16 18 6"/>
+        </svg>
+      </span>`;
+    } else {
+      // Single check — sent
+      checkSvg = `<span class="message-check">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4 12 8 16 16 6"/>
+        </svg>
+      </span>`;
+    }
+  }
 
   const html = `
     <div class="message ${isMine ? 'message-out' : 'message-in'}" data-id="${msg.id}">
