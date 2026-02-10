@@ -717,6 +717,15 @@ function openUserProfile(user) {
   const avatarUrl = user.avatar_url || user.other_avatar_url || null;
   setAvatarElement(upAvatar, displayName, avatarColor, avatarUrl);
 
+  // Make avatar clickable if has image
+  if (avatarUrl) {
+    upAvatar.classList.add('has-image');
+    upAvatar.onclick = () => openAvatarViewer(avatarUrl, displayName);
+  } else {
+    upAvatar.classList.remove('has-image');
+    upAvatar.onclick = null;
+  }
+
   // Name
   upName.textContent = displayName;
 
@@ -749,6 +758,24 @@ function openUserProfile(user) {
 function closeUserProfile() {
   userProfileModal.style.display = 'none';
   userProfileTarget = null;
+}
+
+// ============ AVATAR VIEWER (fullscreen) ============
+const avatarViewer = $('#avatar-viewer');
+const avatarViewerImg = $('#avatar-viewer-img');
+const avatarViewerName = $('#avatar-viewer-name');
+const avatarViewerClose = $('#avatar-viewer-close');
+
+function openAvatarViewer(imageUrl, name) {
+  if (!imageUrl) return;
+  avatarViewerImg.src = imageUrl;
+  avatarViewerName.textContent = name || '';
+  avatarViewer.style.display = 'flex';
+}
+
+function closeAvatarViewer() {
+  avatarViewer.style.display = 'none';
+  avatarViewerImg.src = '';
 }
 
 // ============ AVATAR UPLOAD ============
@@ -860,6 +887,10 @@ function setupEventListeners() {
   // User profile modal
   $('#user-profile-close').addEventListener('click', closeUserProfile);
   userProfileModal.addEventListener('click', (e) => { if (e.target === userProfileModal) closeUserProfile(); });
+
+  // Avatar viewer
+  avatarViewerClose.addEventListener('click', closeAvatarViewer);
+  $('.avatar-viewer-backdrop').addEventListener('click', closeAvatarViewer);
   upSendMessage.addEventListener('click', () => {
     const userId = userProfileTarget?.id || userProfileTarget?.other_user_id;
     if (userId) {
@@ -969,7 +1000,9 @@ function setupEventListeners() {
   // Handle escape key
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (userProfileModal.style.display !== 'none') {
+      if (avatarViewer.style.display !== 'none') {
+        closeAvatarViewer();
+      } else if (userProfileModal.style.display !== 'none') {
         closeUserProfile();
       } else if (searchResults.style.display === 'block') {
         hideSearch();

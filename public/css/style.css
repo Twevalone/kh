@@ -1548,3 +1548,101 @@ button { cursor: pointer; }
 .chat-header-avatar {
   cursor: pointer;
 }
+
+/* ============ FULLSCREEN AVATAR VIEWER ============ */
+.avatar-viewer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: avatarViewerIn 0.25s ease;
+}
+
+@keyframes avatarViewerIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.avatar-viewer-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.9);
+}
+
+.avatar-viewer-content {
+  position: relative;
+  z-index: 1;
+  max-width: 90vw;
+  max-height: 80vh;
+}
+
+.avatar-viewer-content img {
+  max-width: 90vw;
+  max-height: 80vh;
+  border-radius: 8px;
+  object-fit: contain;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+  animation: avatarZoomIn 0.3s ease;
+}
+
+@keyframes avatarZoomIn {
+  from { transform: scale(0.7); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.avatar-viewer-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 2;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.avatar-viewer-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.avatar-viewer-name {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  color: white;
+  font-size: 16px;
+  font-weight: 500;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 8px 20px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+/* Make profile avatars clickable when they have images */
+.up-avatar.has-image,
+.profile-avatar.has-image {
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.up-avatar.has-image:hover,
+.profile-avatar.has-image:hover {
+  opacity: 0.85;
+}
