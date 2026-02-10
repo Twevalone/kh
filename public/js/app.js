@@ -1223,20 +1223,36 @@ async function handleOffer(from, offer) {
   }
 }
 
-async function startWebRTC(isCaller) {
+async function startWebRTC(isCaller, forceRelay = false) {
   try {
     // Reset buffers
     state.pendingOffer = null;
     state.pendingCandidates = [];
+    state.callRetried = state.callRetried || false;
 
-    // Get microphone
-    console.log('Requesting microphone...');
-    state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    console.log('Microphone acquired');
+    // Get microphone (reuse if already have it from retry)
+    if (!state.localStream) {
+      console.log('Requesting microphone...');
+      state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log('Microphone acquired');
+    }
+
+    // Close old peer connection if retrying
+    if (state.peerConnection) {
+      state.peerConnection.close();
+      state.peerConnection = null;
+    }
+
+    // Build ICE config — force relay mode on retry
+    const iceConfig = { ...ICE_SERVERS };
+    if (forceRelay) {
+      iceConfig.iceTransportPolicy = 'relay';
+      console.log('FORCED RELAY MODE — all traffic via TURN');
+    }
 
     // Create peer connection
-    state.peerConnection = new RTCPeerConnection(ICE_SERVERS);
-    console.log('PeerConnection created');
+    state.peerConnection = new RTCPeerConnection(iceConfig);
+    console.log('PeerConnection created, relay:', forceRelay);
 
     // Add local audio tracks
     state.localStream.getTracks().forEach(track => {
@@ -1246,7 +1262,6 @@ async function startWebRTC(isCaller) {
     // Handle remote stream
     state.peerConnection.ontrack = (event) => {
       console.log('Remote track received');
-      // Remove any existing remote audio
       const old = document.getElementById('remote-audio');
       if (old) old.remove();
 
@@ -1255,13 +1270,13 @@ async function startWebRTC(isCaller) {
       remoteAudio.autoplay = true;
       remoteAudio.srcObject = event.streams[0];
       document.body.appendChild(remoteAudio);
-      // Force play (needed on some mobile browsers)
       remoteAudio.play().catch(e => console.log('Audio play error:', e));
     };
 
     // ICE candidates — send to peer
     state.peerConnection.onicecandidate = (event) => {
       if (event.candidate && state.callPeer) {
+        console.log('ICE candidate type:', event.candidate.type, event.candidate.protocol);
         state.socket.emit('call:ice-candidate', {
           targetUserId: state.callPeer.id,
           candidate: event.candidate
@@ -1269,45 +1284,92 @@ async function startWebRTC(isCaller) {
       }
     };
 
-    // ICE connection state — shows actual connectivity
+    // ICE connection state
     state.peerConnection.oniceconnectionstatechange = () => {
       const iceState = state.peerConnection?.iceConnectionState;
-      console.log('ICE connection state:', iceState);
+      console.log('ICE state:', iceState, '| relay:', forceRelay);
+
       if (iceState === 'connected' || iceState === 'completed') {
-        // Call is actually connected — start timer
         if (!state.callStartTime) {
           state.callStartTime = Date.now();
           if (state.callTimer) clearInterval(state.callTimer);
           state.callTimer = setInterval(updateCallTimer, 1000);
           callActiveTimer.textContent = '00:00';
+          console.log('CALL CONNECTED' + (forceRelay ? ' (via TURN relay)' : ' (direct)'));
         }
       } else if (iceState === 'checking') {
-        callActiveTimer.textContent = 'Подключение...';
+        callActiveTimer.textContent = forceRelay ? 'Подключение через relay...' : 'Подключение...';
       } else if (iceState === 'failed') {
-        console.error('ICE connection failed');
+        console.error('ICE failed, relay:', forceRelay, 'retried:', state.callRetried);
+
+        // AUTO-RETRY: if first attempt failed, retry with forced TURN relay
+        if (!forceRelay && !state.callRetried && isCaller) {
+          console.log('Direct connection failed — retrying with TURN relay...');
+          callActiveTimer.textContent = 'Повтор через relay...';
+          state.callRetried = true;
+          // Re-negotiate with forced relay
+          startWebRTC(true, true);
+          return;
+        }
+
         showCallToast('Не удалось установить соединение');
         endActiveCall();
       } else if (iceState === 'disconnected') {
         callActiveTimer.textContent = 'Переподключение...';
-        // Give it a few seconds to reconnect
         setTimeout(() => {
           if (state.peerConnection?.iceConnectionState === 'disconnected') {
-            endActiveCall();
-            showCallToast('Соединение потеряно');
+            // Try ICE restart before giving up
+            if (state.peerConnection && isCaller) {
+              console.log('Attempting ICE restart...');
+              state.peerConnection.restartIce();
+              state.peerConnection.createOffer({ iceRestart: true }).then(offer => {
+                state.peerConnection.setLocalDescription(offer);
+                state.socket.emit('call:offer', { targetUserId: state.callPeer.id, offer });
+              }).catch(() => {});
+              // Give restart 5 more seconds
+              setTimeout(() => {
+                if (state.peerConnection?.iceConnectionState === 'disconnected') {
+                  endActiveCall();
+                  showCallToast('Соединение потеряно');
+                }
+              }, 5000);
+            } else {
+              endActiveCall();
+              showCallToast('Соединение потеряно');
+            }
           }
         }, 5000);
       }
     };
 
-    // ICE gathering state
+    // Log gathered ICE candidate types for debugging
+    let candidateTypes = new Set();
     state.peerConnection.onicegatheringstatechange = () => {
-      console.log('ICE gathering state:', state.peerConnection?.iceGatheringState);
+      const gs = state.peerConnection?.iceGatheringState;
+      console.log('ICE gathering:', gs);
+      if (gs === 'complete') {
+        console.log('Candidate types gathered:', [...candidateTypes]);
+        if (!candidateTypes.has('relay') && !forceRelay) {
+          console.warn('No TURN relay candidates gathered — TURN servers may not be reachable');
+        }
+      }
     };
 
-    // Show active call UI
-    showActiveCall();
+    // Track candidate types
+    const origOnIceCandidate = state.peerConnection.onicecandidate;
+    state.peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        candidateTypes.add(event.candidate.type);
+      }
+      origOnIceCandidate(event);
+    };
 
-    // Apply any buffered ICE candidates
+    // Show active call UI (only on first attempt)
+    if (state.callState !== 'active') {
+      showActiveCall();
+    }
+
+    // Apply buffered ICE candidates
     if (state.pendingCandidates && state.pendingCandidates.length > 0) {
       console.log(`Applying ${state.pendingCandidates.length} buffered ICE candidates`);
       for (const c of state.pendingCandidates) {
@@ -1316,7 +1378,7 @@ async function startWebRTC(isCaller) {
       state.pendingCandidates = [];
     }
 
-    // Apply buffered offer (if callee received it before PeerConnection was ready)
+    // Apply buffered offer
     if (!isCaller && state.pendingOffer) {
       console.log('Applying buffered offer');
       await handleOffer(state.pendingOffer.from, state.pendingOffer.offer);
@@ -1324,27 +1386,35 @@ async function startWebRTC(isCaller) {
     }
 
     if (isCaller) {
-      // Create and send offer
       const offer = await state.peerConnection.createOffer();
       await state.peerConnection.setLocalDescription(offer);
       state.socket.emit('call:offer', {
         targetUserId: state.callPeer.id,
         offer
       });
-      console.log('Offer sent');
+      console.log('Offer sent, relay:', forceRelay);
     }
 
-    // Timeout: if not connected in 20 seconds, give up
+    // Timeout
+    const timeout = forceRelay ? 15000 : 12000;
     setTimeout(() => {
-      if (state.peerConnection && state.callState === 'active') {
+      if (state.peerConnection && state.callState === 'active' && !state.callStartTime) {
         const iceState = state.peerConnection.iceConnectionState;
         if (iceState !== 'connected' && iceState !== 'completed') {
-          console.error('Call connection timeout. ICE state:', iceState);
-          showCallToast('Не удалось подключиться — попробуйте позже');
+          // On first attempt, try relay before giving up
+          if (!forceRelay && !state.callRetried && isCaller) {
+            console.log('Timeout — retrying with TURN relay...');
+            callActiveTimer.textContent = 'Повтор через relay...';
+            state.callRetried = true;
+            startWebRTC(true, true);
+            return;
+          }
+          console.error('Call timeout. ICE state:', iceState);
+          showCallToast('Не удалось подключиться');
           endActiveCall();
         }
       }
-    }, 20000);
+    }, timeout);
 
   } catch (err) {
     console.error('WebRTC error:', err);
@@ -1408,6 +1478,7 @@ function endCallCleanup() {
   state.isSpeaker = false;
   state.pendingOffer = null;
   state.pendingCandidates = [];
+  state.callRetried = false;
 
   callOutgoing.style.display = 'none';
   callIncoming.style.display = 'none';
