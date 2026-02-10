@@ -226,6 +226,23 @@
             <button class="send-btn" id="send-btn" title="Отправить">
               <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
             </button>
+            <button class="mic-btn" id="mic-btn" title="Голосовое сообщение">
+              <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+            </button>
+          </div>
+
+          <!-- Voice recording overlay -->
+          <div class="voice-recording-overlay" id="voice-recording-overlay" style="display:none">
+            <button class="voice-cancel-btn" id="voice-cancel-btn" title="Отмена">
+              <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+            <div class="voice-recording-indicator">
+              <div class="voice-recording-dot"></div>
+              <span class="voice-recording-timer" id="voice-recording-timer">0:00</span>
+            </div>
+            <button class="voice-send-btn" id="voice-send-btn" title="Отправить">
+              <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
           </div>
         </div>
       </div>

@@ -59,6 +59,14 @@ async function initDB() {
     // Add avatar_url column if not exists
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT NULL`);
 
+    // Add voice message columns if not exist
+    await client.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'text'`);
+    await client.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS audio_data TEXT DEFAULT NULL`);
+    await client.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS audio_duration REAL DEFAULT NULL`);
+
+    // Make text column nullable for voice messages
+    await client.query(`ALTER TABLE messages ALTER COLUMN text DROP NOT NULL`);
+
     console.log('Database initialized');
   } finally {
     client.release();
@@ -154,6 +162,7 @@ const ops = {
         u.is_online as other_is_online,
         u.last_seen as other_last_seen,
         (SELECT text FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message,
+        (SELECT type FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_type,
         (SELECT sender_id FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_sender,
         (SELECT created_at FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_time,
         (SELECT COUNT(*) FROM messages WHERE chat_id = c.id AND is_read = FALSE AND sender_id != $1) as unread_count
@@ -168,10 +177,10 @@ const ops = {
     return rows;
   },
 
-  async createMessage(id, chatId, senderId, text) {
+  async createMessage(id, chatId, senderId, text, type = 'text', audioData = null, audioDuration = null) {
     await pool.query(
-      `INSERT INTO messages (id, chat_id, sender_id, text) VALUES ($1, $2, $3, $4)`,
-      [id, chatId, senderId, text]
+      `INSERT INTO messages (id, chat_id, sender_id, text, type, audio_data, audio_duration) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, chatId, senderId, text, type, audioData, audioDuration]
     );
   },
 
@@ -179,6 +188,7 @@ const ops = {
     const { rows } = await pool.query(
       `SELECT 
         m.id, m.chat_id, m.sender_id, m.text, m.created_at, m.is_read,
+        m.type, m.audio_data, m.audio_duration,
         u.username as sender_username, u.display_name as sender_display_name, u.avatar_color as sender_avatar_color, u.avatar_url as sender_avatar_url
       FROM messages m
       JOIN users u ON u.id = m.sender_id
@@ -206,6 +216,13 @@ const ops = {
 
   async updateAvatar(userId, avatarUrl) {
     await pool.query(`UPDATE users SET avatar_url = $1 WHERE id = $2`, [avatarUrl, userId]);
+  },
+
+  async cleanupOldVoiceMessages(days = 3) {
+    const result = await pool.query(
+      `DELETE FROM messages WHERE type = 'voice' AND created_at < NOW() - INTERVAL '${days} days'`
+    );
+    return result.rowCount;
   },
 
   async getAllUsers() {

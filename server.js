@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 3000;
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '2mb' }));
 
 // ============ REST API ============
 
@@ -270,17 +270,27 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Send message
+  // Send message (text or voice)
   socket.on('message:send', async (data, callback) => {
     try {
-      const { chatId, text } = data;
+      const { chatId, text, type, audioData, audioDuration } = data;
 
-      if (!text || !text.trim()) return;
+      // Validate based on message type
+      if (type === 'voice') {
+        if (!audioData) return;
+        // Limit voice message size (~1.5MB base64)
+        if (audioData.length > 2000000) {
+          if (callback) callback({ error: 'Голосовое сообщение слишком большое' });
+          return;
+        }
+      } else {
+        if (!text || !text.trim()) return;
+      }
 
       const messageId = uuidv4();
-      const trimmedText = text.trim();
+      const trimmedText = type === 'voice' ? null : text.trim();
 
-      await ops.createMessage(messageId, chatId, userId, trimmedText);
+      await ops.createMessage(messageId, chatId, userId, trimmedText, type || 'text', audioData || null, audioDuration || null);
 
       const sender = await ops.getUserById(userId);
       const message = {
@@ -288,6 +298,9 @@ io.on('connection', (socket) => {
         chat_id: chatId,
         sender_id: userId,
         text: trimmedText,
+        type: type || 'text',
+        audio_data: audioData || null,
+        audio_duration: audioDuration || null,
         created_at: new Date().toISOString(),
         is_read: false,
         sender_username: sender?.username,
@@ -377,6 +390,25 @@ async function start() {
   } catch (e) {
     console.log('Could not list users:', e.message);
   }
+
+  // Cleanup old voice messages every hour (keep 3 days)
+  const VOICE_CLEANUP_DAYS = 3;
+  const CLEANUP_INTERVAL = 60 * 60 * 1000; // 1 hour
+
+  async function runCleanup() {
+    try {
+      const deleted = await ops.cleanupOldVoiceMessages(VOICE_CLEANUP_DAYS);
+      if (deleted > 0) {
+        console.log(`Cleanup: deleted ${deleted} voice messages older than ${VOICE_CLEANUP_DAYS} days`);
+      }
+    } catch (err) {
+      console.error('Voice cleanup error:', err);
+    }
+  }
+
+  // Run cleanup on startup and then every hour
+  runCleanup();
+  setInterval(runCleanup, CLEANUP_INTERVAL);
 
   server.listen(PORT, () => {
     console.log(`\n  Messenger started!`);

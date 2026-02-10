@@ -1259,3 +1259,228 @@ button { cursor: pointer; }
 .profile-avatar-wrapper:hover .profile-avatar-overlay {
   opacity: 1;
 }
+
+/* ============ VOICE MESSAGES ============ */
+
+/* Mic button — shown when input is empty */
+.mic-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.2s, background 0.2s;
+}
+
+.mic-btn:hover {
+  color: var(--accent);
+  background: rgba(42, 171, 238, 0.1);
+}
+
+/* Hide send/mic depending on state */
+.message-input-area .send-btn { display: none; }
+.message-input-area .mic-btn { display: flex; }
+.message-input-area.has-text .send-btn { display: flex; }
+.message-input-area.has-text .mic-btn { display: none; }
+
+/* Voice recording overlay */
+.voice-recording-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 100%;
+  background: var(--bg-primary);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 12px;
+  z-index: 10;
+  animation: slideUp 0.2s ease;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.voice-cancel-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.2s;
+}
+
+.voice-cancel-btn:hover {
+  color: #FF5252;
+}
+
+.voice-recording-indicator {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.voice-recording-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #FF5252;
+  animation: voicePulse 1s infinite;
+}
+
+@keyframes voicePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.voice-recording-timer {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.voice-send-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+
+.voice-send-btn:hover {
+  transform: scale(1.08);
+}
+
+/* Make message-input-area relative for overlay positioning */
+.message-input-area {
+  position: relative;
+}
+
+/* Voice player inside messages */
+.voice-player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 200px;
+  padding: 4px 0;
+}
+
+.voice-play-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255,255,255,0.15);
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.message-in .voice-play-btn {
+  background: rgba(255,255,255,0.1);
+}
+
+.voice-play-btn:hover {
+  background: rgba(255,255,255,0.25);
+}
+
+.voice-progress-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.voice-progress-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255,255,255,0.15);
+  border-radius: 2px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.message-in .voice-progress-bar {
+  background: rgba(255,255,255,0.12);
+}
+
+.voice-progress-fill {
+  height: 100%;
+  background: currentColor;
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.1s linear;
+}
+
+.voice-waveform {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+}
+
+.voice-waveform-bar {
+  width: 3px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.4;
+  transition: opacity 0.1s;
+}
+
+.voice-waveform-bar.active {
+  opacity: 0.9;
+}
+
+.voice-duration {
+  font-size: 12px;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+/* Voice message expired placeholder */
+.voice-expired {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-style: italic;
+  font-size: 13px;
+  padding: 4px 0;
+}
+
+/* Chat list voice preview */
+.chat-item-voice-icon {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-right: 2px;
+  opacity: 0.7;
+}
