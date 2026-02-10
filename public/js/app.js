@@ -27,6 +27,10 @@ const state = {
   isSpeaker: false,
   pendingOffer: null,
   pendingCandidates: [],
+  // Reply & forward
+  replyTo: null, // { id, senderName, text, type }
+  contextMenuMsgId: null,
+  forwardMsg: null, // message to forward
 };
 
 // ============ DOM ELEMENTS ============
@@ -66,6 +70,19 @@ const sendBtn = $('#send-btn');
 const backBtn = $('#back-btn');
 const typingIndicator = $('#typing-indicator');
 const typingText = $('#typing-text');
+
+// Reply & forward DOM
+const replyBar = $('#reply-bar');
+const replyBarName = $('#reply-bar-name');
+const replyBarText = $('#reply-bar-text');
+const replyBarClose = $('#reply-bar-close');
+const msgContextMenu = $('#msg-context-menu');
+const ctxReply = $('#ctx-reply');
+const ctxForward = $('#ctx-forward');
+const ctxCopy = $('#ctx-copy');
+const forwardModal = $('#forward-modal');
+const forwardChatList = $('#forward-chat-list');
+const forwardClose = $('#forward-close');
 
 // ============ INIT ============
 function init() {
@@ -462,6 +479,9 @@ function openChat(otherUserId) {
       updateChatStatus();
     }
 
+    // Clear reply state when switching chats
+    clearReply();
+
     // Render messages
     renderMessages(data.messages || []);
 
@@ -533,6 +553,29 @@ function appendMessage(msg) {
     }
   }
 
+  // Reply preview inside message
+  let replyHTML = '';
+  if (msg.reply_to_id && msg.reply_sender_name) {
+    const replyPreview = msg.reply_type === 'voice'
+      ? '🎤 Голосовое сообщение'
+      : escapeHtml((msg.reply_text || '').substring(0, 80));
+    replyHTML = `
+      <div class="message-reply" data-reply-id="${msg.reply_to_id}">
+        <div class="message-reply-name">${escapeHtml(msg.reply_sender_name)}</div>
+        <div class="message-reply-text">${replyPreview}</div>
+      </div>`;
+  }
+
+  // Forward label
+  let forwardHTML = '';
+  if (msg.forwarded_from) {
+    forwardHTML = `
+      <div class="message-forward-label">
+        <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+        Переслано от ${escapeHtml(msg.forwarded_from)}
+      </div>`;
+  }
+
   let contentHTML;
   if (msg.type === 'voice') {
     if (msg.audio_data) {
@@ -558,17 +601,22 @@ function appendMessage(msg) {
     contentHTML = `<div class="message-text">${linkify(escapeHtml(msg.text || ''))}</div>`;
   }
 
-  const html = `
-    <div class="message ${isMine ? 'message-out' : 'message-in'}" data-id="${msg.id}">
+  const msgDiv = document.createElement('div');
+  msgDiv.className = `message ${isMine ? 'message-out' : 'message-in'}`;
+  msgDiv.dataset.id = msg.id;
+  msgDiv.dataset.sender = msg.sender_display_name || msg.sender_username || '';
+  msgDiv.dataset.text = (msg.text || '').substring(0, 200);
+  msgDiv.dataset.type = msg.type || 'text';
+  msgDiv.innerHTML = `
+      ${forwardHTML}
+      ${replyHTML}
       ${contentHTML}
       <div class="message-meta">
         <span class="message-time">${time}</span>
         ${checkSvg}
-      </div>
-    </div>
-  `;
+      </div>`;
 
-  messagesList.insertAdjacentHTML('beforeend', html);
+  messagesList.appendChild(msgDiv);
 }
 
 function appendDateSeparator(dateStr) {
@@ -584,12 +632,19 @@ function sendMessage() {
   const text = messageInput.value.trim();
   if (!text || !state.currentChatId) return;
 
-  state.socket.emit('message:send', {
+  const payload = {
     chatId: state.currentChatId,
     text
-  });
+  };
+
+  if (state.replyTo) {
+    payload.replyToId = state.replyTo.id;
+  }
+
+  state.socket.emit('message:send', payload);
 
   messageInput.value = '';
+  clearReply();
   autoResizeInput();
   updateSendButton();
   messageInput.focus();
@@ -917,6 +972,169 @@ async function uploadAvatar(base64) {
 }
 
 // ============ EVENT LISTENERS ============
+// ============ REPLY / FORWARD / CONTEXT MENU ============
+function setReply(msgId, senderName, text, type) {
+  state.replyTo = { id: msgId, senderName, text, type };
+  replyBarName.textContent = senderName;
+  replyBarText.textContent = type === 'voice' ? '🎤 Голосовое сообщение' : (text || '').substring(0, 80);
+  replyBar.style.display = 'flex';
+  messageInput.focus();
+}
+
+function clearReply() {
+  state.replyTo = null;
+  replyBar.style.display = 'none';
+}
+
+function showContextMenu(e, msgEl) {
+  e.preventDefault();
+  e.stopPropagation();
+  hideContextMenu();
+
+  const msgId = msgEl.dataset.id;
+  const msgType = msgEl.dataset.type;
+  const msgText = msgEl.dataset.text;
+  const msgSender = msgEl.dataset.sender;
+
+  state.contextMenuMsgId = msgId;
+  msgContextMenu._msgData = { id: msgId, type: msgType, text: msgText, sender: msgSender };
+
+  // Show/hide copy based on message type
+  ctxCopy.style.display = msgType === 'voice' ? 'none' : 'flex';
+
+  msgContextMenu.style.display = 'block';
+
+  // Position
+  const menuW = msgContextMenu.offsetWidth;
+  const menuH = msgContextMenu.offsetHeight;
+  let x = e.clientX || e.touches?.[0]?.clientX || 0;
+  let y = e.clientY || e.touches?.[0]?.clientY || 0;
+
+  if (x + menuW > window.innerWidth) x = window.innerWidth - menuW - 8;
+  if (y + menuH > window.innerHeight) y = window.innerHeight - menuH - 8;
+  if (x < 8) x = 8;
+  if (y < 8) y = 8;
+
+  msgContextMenu.style.left = x + 'px';
+  msgContextMenu.style.top = y + 'px';
+}
+
+function hideContextMenu() {
+  msgContextMenu.style.display = 'none';
+  state.contextMenuMsgId = null;
+}
+
+function handleCtxReply() {
+  const d = msgContextMenu._msgData;
+  if (d) setReply(d.id, d.sender, d.text, d.type);
+  hideContextMenu();
+}
+
+function handleCtxCopy() {
+  const d = msgContextMenu._msgData;
+  if (d && d.text) {
+    navigator.clipboard.writeText(d.text).catch(() => {});
+  }
+  hideContextMenu();
+}
+
+function handleCtxForward() {
+  const d = msgContextMenu._msgData;
+  if (!d) return;
+  state.forwardMsg = d;
+  hideContextMenu();
+  openForwardModal();
+}
+
+function openForwardModal() {
+  forwardChatList.innerHTML = '';
+  // Show all chats
+  state.chats.forEach(chat => {
+    const name = chat.other_display_name || chat.other_username;
+    const color = chat.other_avatar_color || '#5B9BD5';
+    const avatarUrl = chat.other_avatar_url;
+    const avatarHTML = avatarUrl
+      ? `<div class="forward-chat-avatar"><img class="avatar-img" src="${avatarUrl}"></div>`
+      : `<div class="forward-chat-avatar" style="background:${color}">${(name || '?')[0].toUpperCase()}</div>`;
+
+    forwardChatList.insertAdjacentHTML('beforeend', `
+      <div class="forward-chat-item" data-chat-id="${chat.chat_id}" data-user-id="${chat.other_user_id}">
+        ${avatarHTML}
+        <div class="forward-chat-name">${escapeHtml(name)}</div>
+      </div>
+    `);
+  });
+  forwardModal.style.display = 'flex';
+}
+
+function closeForwardModal() {
+  forwardModal.style.display = 'none';
+  state.forwardMsg = null;
+}
+
+function handleForwardSelect(chatId, targetUserId) {
+  const fwd = state.forwardMsg;
+  if (!fwd) return;
+
+  // If the selected chat is different from current, we need to open it first
+  const targetChatId = chatId;
+  const text = fwd.type === 'voice' ? '🎤 Голосовое сообщение' : (fwd.text || '');
+  const senderName = fwd.sender;
+
+  // Emit the message to the target chat with forwarded_from
+  state.socket.emit('message:send', {
+    chatId: targetChatId,
+    text: text,
+    forwardedFrom: senderName
+  });
+
+  closeForwardModal();
+
+  // Open that chat if different
+  if (targetChatId !== state.currentChatId) {
+    openChat(targetUserId);
+  }
+}
+
+function scrollToMessage(msgId) {
+  const el = messagesList.querySelector(`.message[data-id="${msgId}"]`);
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('message-highlight');
+    setTimeout(() => el.classList.remove('message-highlight'), 1600);
+  }
+}
+
+// Long press for mobile
+let longPressTimer = null;
+let longPressTarget = null;
+
+function onMsgTouchStart(e) {
+  const msgEl = e.target.closest('.message');
+  if (!msgEl) return;
+  // Don't interfere with voice play buttons
+  if (e.target.closest('.voice-play-btn') || e.target.closest('.voice-progress-bar')) return;
+  longPressTarget = msgEl;
+  longPressTimer = setTimeout(() => {
+    showContextMenu(e, msgEl);
+    longPressTarget = null;
+  }, 500);
+}
+
+function onMsgTouchEnd() {
+  clearTimeout(longPressTimer);
+  longPressTarget = null;
+}
+
+function onMsgTouchMove() {
+  clearTimeout(longPressTimer);
+  longPressTarget = null;
+}
+
+// ============ SWIPE TO REPLY (mobile) ============
+let swipeStartX = null;
+let swipeMsgEl = null;
+
 function setupEventListeners() {
   // Auth
   authForm.addEventListener('submit', handleAuth);
@@ -1011,8 +1229,12 @@ function setupEventListeners() {
     toggleEmojiPicker();
   });
 
-  // Close emoji picker and search on click outside
+  // Close emoji picker, search, context menu on click outside
   document.addEventListener('click', (e) => {
+    // Close context menu
+    if (msgContextMenu.style.display !== 'none' && !msgContextMenu.contains(e.target)) {
+      hideContextMenu();
+    }
     // Close emoji picker
     if (emojiPicker.style.display !== 'none' && !emojiPicker.contains(e.target) && !emojiBtn.contains(e.target)) {
       emojiPicker.style.display = 'none';
@@ -1033,6 +1255,43 @@ function setupEventListeners() {
   $('#call-end').addEventListener('click', endActiveCall);
   callMuteBtn.addEventListener('click', toggleMute);
   callSpeakerBtn.addEventListener('click', toggleSpeaker);
+
+  // Reply bar close
+  replyBarClose.addEventListener('click', clearReply);
+
+  // Context menu actions
+  ctxReply.addEventListener('click', handleCtxReply);
+  ctxForward.addEventListener('click', handleCtxForward);
+  ctxCopy.addEventListener('click', handleCtxCopy);
+
+  // Right-click on messages
+  messagesList.addEventListener('contextmenu', (e) => {
+    const msgEl = e.target.closest('.message');
+    if (msgEl) showContextMenu(e, msgEl);
+  });
+
+  // Long press on messages (mobile)
+  messagesList.addEventListener('touchstart', onMsgTouchStart, { passive: true });
+  messagesList.addEventListener('touchend', onMsgTouchEnd);
+  messagesList.addEventListener('touchmove', onMsgTouchMove);
+
+  // Click on reply inside message — scroll to original
+  messagesList.addEventListener('click', (e) => {
+    const replyEl = e.target.closest('.message-reply');
+    if (replyEl) {
+      scrollToMessage(replyEl.dataset.replyId);
+    }
+  });
+
+  // Forward modal
+  forwardClose.addEventListener('click', closeForwardModal);
+  forwardModal.addEventListener('click', (e) => { if (e.target === forwardModal) closeForwardModal(); });
+  forwardChatList.addEventListener('click', (e) => {
+    const item = e.target.closest('.forward-chat-item');
+    if (item) {
+      handleForwardSelect(item.dataset.chatId, item.dataset.userId);
+    }
+  });
 
   // Voice recording
   micBtn.addEventListener('click', () => {
@@ -1074,6 +1333,7 @@ function setupEventListeners() {
     sidebar.classList.remove('hidden');
     state.currentChatId = null;
     state.currentOtherUser = null;
+    clearReply();
     chatView.style.display = 'none';
     chatEmpty.style.display = 'flex';
     loadChats();
@@ -1082,10 +1342,16 @@ function setupEventListeners() {
   // Handle escape key
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (avatarViewer.style.display !== 'none') {
+      if (msgContextMenu.style.display !== 'none') {
+        hideContextMenu();
+      } else if (forwardModal.style.display !== 'none') {
+        closeForwardModal();
+      } else if (avatarViewer.style.display !== 'none') {
         closeAvatarViewer();
       } else if (userProfileModal.style.display !== 'none') {
         closeUserProfile();
+      } else if (state.replyTo) {
+        clearReply();
       } else if (searchResults.style.display === 'block') {
         hideSearch();
       }

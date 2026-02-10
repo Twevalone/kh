@@ -67,6 +67,10 @@ async function initDB() {
     // Make text column nullable for voice messages
     await client.query(`ALTER TABLE messages ALTER COLUMN text DROP NOT NULL`);
 
+    // Reply & forward columns
+    await client.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_id TEXT DEFAULT NULL`);
+    await client.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS forwarded_from TEXT DEFAULT NULL`);
+
     console.log('Database initialized');
   } finally {
     client.release();
@@ -177,11 +181,20 @@ const ops = {
     return rows;
   },
 
-  async createMessage(id, chatId, senderId, text, type = 'text', audioData = null, audioDuration = null) {
+  async createMessage(id, chatId, senderId, text, type = 'text', audioData = null, audioDuration = null, replyToId = null, forwardedFrom = null) {
     await pool.query(
-      `INSERT INTO messages (id, chat_id, sender_id, text, type, audio_data, audio_duration) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [id, chatId, senderId, text, type, audioData, audioDuration]
+      `INSERT INTO messages (id, chat_id, sender_id, text, type, audio_data, audio_duration, reply_to_id, forwarded_from) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [id, chatId, senderId, text, type, audioData, audioDuration, replyToId, forwardedFrom]
     );
+  },
+
+  async getMessageById(id) {
+    const { rows } = await pool.query(
+      `SELECT m.id, m.text, m.type, m.sender_id, u.display_name as sender_display_name
+       FROM messages m JOIN users u ON u.id = m.sender_id
+       WHERE m.id = $1`, [id]
+    );
+    return rows[0] || null;
   },
 
   async getChatMessages(chatId) {
@@ -189,9 +202,13 @@ const ops = {
       `SELECT 
         m.id, m.chat_id, m.sender_id, m.text, m.created_at, m.is_read,
         m.type, m.audio_data, m.audio_duration,
-        u.username as sender_username, u.display_name as sender_display_name, u.avatar_color as sender_avatar_color, u.avatar_url as sender_avatar_url
+        m.reply_to_id, m.forwarded_from,
+        u.username as sender_username, u.display_name as sender_display_name, u.avatar_color as sender_avatar_color, u.avatar_url as sender_avatar_url,
+        rm.text as reply_text, rm.type as reply_type, ru.display_name as reply_sender_name
       FROM messages m
       JOIN users u ON u.id = m.sender_id
+      LEFT JOIN messages rm ON rm.id = m.reply_to_id
+      LEFT JOIN users ru ON ru.id = rm.sender_id
       WHERE m.chat_id = $1
       ORDER BY m.created_at ASC`,
       [chatId]

@@ -273,12 +273,11 @@ io.on('connection', (socket) => {
   // Send message (text or voice)
   socket.on('message:send', async (data, callback) => {
     try {
-      const { chatId, text, type, audioData, audioDuration } = data;
+      const { chatId, text, type, audioData, audioDuration, replyToId, forwardedFrom } = data;
 
       // Validate based on message type
       if (type === 'voice') {
         if (!audioData) return;
-        // Limit voice message size (~1.5MB base64)
         if (audioData.length > 2000000) {
           if (callback) callback({ error: 'Голосовое сообщение слишком большое' });
           return;
@@ -290,9 +289,24 @@ io.on('connection', (socket) => {
       const messageId = uuidv4();
       const trimmedText = type === 'voice' ? null : text.trim();
 
-      await ops.createMessage(messageId, chatId, userId, trimmedText, type || 'text', audioData || null, audioDuration || null);
+      await ops.createMessage(messageId, chatId, userId, trimmedText, type || 'text', audioData || null, audioDuration || null, replyToId || null, forwardedFrom || null);
 
       const sender = await ops.getUserById(userId);
+
+      // Build reply info if replying
+      let replyInfo = null;
+      if (replyToId) {
+        const replyMsg = await ops.getMessageById(replyToId);
+        if (replyMsg) {
+          replyInfo = {
+            reply_to_id: replyToId,
+            reply_text: replyMsg.text,
+            reply_type: replyMsg.type,
+            reply_sender_name: replyMsg.sender_display_name
+          };
+        }
+      }
+
       const message = {
         id: messageId,
         chat_id: chatId,
@@ -301,6 +315,9 @@ io.on('connection', (socket) => {
         type: type || 'text',
         audio_data: audioData || null,
         audio_duration: audioDuration || null,
+        reply_to_id: replyToId || null,
+        forwarded_from: forwardedFrom || null,
+        ...(replyInfo || {}),
         created_at: new Date().toISOString(),
         is_read: false,
         sender_username: sender?.username,
@@ -309,10 +326,8 @@ io.on('connection', (socket) => {
         sender_avatar_url: sender?.avatar_url || null
       };
 
-      // Send to all in room
       io.to(chatId).emit('message:new', message);
 
-      // Notify other members to refresh chat list
       const chatMembers = await ops.getChatMembersExcept(chatId, userId);
       chatMembers.forEach(member => {
         const memberSockets = onlineUsers.get(member.user_id);
