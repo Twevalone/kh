@@ -25,6 +25,8 @@ const state = {
   callStartTime: null,
   isMuted: false,
   isSpeaker: false,
+  pendingOffer: null,
+  pendingCandidates: [],
 };
 
 // ============ DOM ELEMENTS ============
@@ -289,16 +291,16 @@ function connectSocket() {
 
   // ---- Call signaling ----
   state.socket.on('call:incoming', ({ callerId, callerName, callerAvatarColor, callerAvatarUrl }) => {
-    // Ignore if already in a call
     if (state.callState !== 'idle') return;
     state.callPeer = { id: callerId, name: callerName, avatarColor: callerAvatarColor, avatarUrl: callerAvatarUrl };
     showIncomingCall();
   });
 
-  state.socket.on('call:accepted', () => {
+  state.socket.on('call:accepted', async () => {
     if (state.callState !== 'outgoing') return;
-    // Callee accepted — start WebRTC
-    startWebRTC(true); // true = we are the caller (create offer)
+    callOutStatus.textContent = 'Подключение...';
+    // Caller: set up WebRTC, create offer, send it
+    await startWebRTC(true);
   });
 
   state.socket.on('call:rejected', () => {
@@ -315,29 +317,35 @@ function connectSocket() {
     }
   });
 
+  // Callee receives offer from caller
   state.socket.on('call:offer', async ({ from, offer }) => {
-    if (state.callState !== 'active' || !state.peerConnection) return;
-    try {
-      await state.peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await state.peerConnection.createAnswer();
-      await state.peerConnection.setLocalDescription(answer);
-      state.socket.emit('call:answer', { targetUserId: from, answer });
-    } catch (err) {
-      console.error('Error handling offer:', err);
+    console.log('Received offer, callState:', state.callState, 'pc:', !!state.peerConnection);
+    // Buffer offer if PeerConnection isn't ready yet
+    if (!state.peerConnection) {
+      state.pendingOffer = { from, offer };
+      console.log('Buffered offer — PeerConnection not ready yet');
+      return;
     }
+    await handleOffer(from, offer);
   });
 
   state.socket.on('call:answer', async ({ from, answer }) => {
     if (!state.peerConnection) return;
     try {
       await state.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+      console.log('Remote description set (answer)');
     } catch (err) {
       console.error('Error handling answer:', err);
     }
   });
 
   state.socket.on('call:ice-candidate', async ({ from, candidate }) => {
-    if (!state.peerConnection) return;
+    // Buffer ICE candidates if PeerConnection isn't ready
+    if (!state.peerConnection) {
+      if (!state.pendingCandidates) state.pendingCandidates = [];
+      state.pendingCandidates.push(candidate);
+      return;
+    }
     try {
       await state.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
     } catch (err) {
@@ -1107,7 +1115,7 @@ const ICE_SERVERS = {
     // STUN
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    // TURN (free relay servers — needed when direct P2P fails)
+    // TURN (free relay — needed when direct P2P fails behind NAT)
     { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
     { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
     { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
@@ -1166,18 +1174,19 @@ function showIncomingCall() {
   setAvatarElement(callInAvatar, state.callPeer.name, state.callPeer.avatarColor, state.callPeer.avatarUrl);
   callInName.textContent = state.callPeer.name;
   callIncoming.style.display = 'flex';
-
-  // Play ringtone using Web Audio API
   playRingtone();
 }
 
-function acceptCall() {
+async function acceptCall() {
   if (state.callState !== 'incoming') return;
   stopRingtone();
-  state.socket.emit('call:accept', { targetUserId: state.callPeer.id });
   callIncoming.style.display = 'none';
-  // Start WebRTC as callee (wait for offer)
-  startWebRTC(false);
+
+  // IMPORTANT: Set up WebRTC FIRST, then tell caller we're ready
+  await startWebRTC(false);
+
+  // Now signal to caller that we're ready to receive the offer
+  state.socket.emit('call:accept', { targetUserId: state.callPeer.id });
 }
 
 function rejectCall() {
@@ -1195,17 +1204,39 @@ function cancelOutgoingCall() {
 
 function endActiveCall() {
   if (state.callState !== 'active' && state.callState !== 'outgoing') return;
-  state.socket.emit('call:end', { targetUserId: state.callPeer.id });
+  if (state.callPeer) {
+    state.socket.emit('call:end', { targetUserId: state.callPeer.id });
+  }
   endCallCleanup();
+}
+
+async function handleOffer(from, offer) {
+  if (!state.peerConnection) return;
+  try {
+    await state.peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+    const answer = await state.peerConnection.createAnswer();
+    await state.peerConnection.setLocalDescription(answer);
+    state.socket.emit('call:answer', { targetUserId: from, answer });
+    console.log('Sent answer to', from);
+  } catch (err) {
+    console.error('Error handling offer:', err);
+  }
 }
 
 async function startWebRTC(isCaller) {
   try {
+    // Reset buffers
+    state.pendingOffer = null;
+    state.pendingCandidates = [];
+
     // Get microphone
+    console.log('Requesting microphone...');
     state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    console.log('Microphone acquired');
 
     // Create peer connection
     state.peerConnection = new RTCPeerConnection(ICE_SERVERS);
+    console.log('PeerConnection created');
 
     // Add local audio tracks
     state.localStream.getTracks().forEach(track => {
@@ -1214,14 +1245,21 @@ async function startWebRTC(isCaller) {
 
     // Handle remote stream
     state.peerConnection.ontrack = (event) => {
-      const remoteAudio = new Audio();
-      remoteAudio.srcObject = event.streams[0];
+      console.log('Remote track received');
+      // Remove any existing remote audio
+      const old = document.getElementById('remote-audio');
+      if (old) old.remove();
+
+      const remoteAudio = document.createElement('audio');
       remoteAudio.id = 'remote-audio';
       remoteAudio.autoplay = true;
+      remoteAudio.srcObject = event.streams[0];
       document.body.appendChild(remoteAudio);
+      // Force play (needed on some mobile browsers)
+      remoteAudio.play().catch(e => console.log('Audio play error:', e));
     };
 
-    // ICE candidates
+    // ICE candidates — send to peer
     state.peerConnection.onicecandidate = (event) => {
       if (event.candidate && state.callPeer) {
         state.socket.emit('call:ice-candidate', {
@@ -1231,23 +1269,59 @@ async function startWebRTC(isCaller) {
       }
     };
 
-    // Connection state
-    state.peerConnection.onconnectionstatechange = () => {
-      const cs = state.peerConnection?.connectionState;
-      console.log('WebRTC connection state:', cs);
-      if (cs === 'connected') {
-        callActiveTimer.textContent = '00:00';
-      }
-      if (cs === 'disconnected' || cs === 'failed' || cs === 'closed') {
-        if (state.callState === 'active') {
-          endActiveCall();
-          showCallToast('Соединение потеряно');
+    // ICE connection state — shows actual connectivity
+    state.peerConnection.oniceconnectionstatechange = () => {
+      const iceState = state.peerConnection?.iceConnectionState;
+      console.log('ICE connection state:', iceState);
+      if (iceState === 'connected' || iceState === 'completed') {
+        // Call is actually connected — start timer
+        if (!state.callStartTime) {
+          state.callStartTime = Date.now();
+          if (state.callTimer) clearInterval(state.callTimer);
+          state.callTimer = setInterval(updateCallTimer, 1000);
+          callActiveTimer.textContent = '00:00';
         }
+      } else if (iceState === 'checking') {
+        callActiveTimer.textContent = 'Подключение...';
+      } else if (iceState === 'failed') {
+        console.error('ICE connection failed');
+        showCallToast('Не удалось установить соединение');
+        endActiveCall();
+      } else if (iceState === 'disconnected') {
+        callActiveTimer.textContent = 'Переподключение...';
+        // Give it a few seconds to reconnect
+        setTimeout(() => {
+          if (state.peerConnection?.iceConnectionState === 'disconnected') {
+            endActiveCall();
+            showCallToast('Соединение потеряно');
+          }
+        }, 5000);
       }
+    };
+
+    // ICE gathering state
+    state.peerConnection.onicegatheringstatechange = () => {
+      console.log('ICE gathering state:', state.peerConnection?.iceGatheringState);
     };
 
     // Show active call UI
     showActiveCall();
+
+    // Apply any buffered ICE candidates
+    if (state.pendingCandidates && state.pendingCandidates.length > 0) {
+      console.log(`Applying ${state.pendingCandidates.length} buffered ICE candidates`);
+      for (const c of state.pendingCandidates) {
+        try { await state.peerConnection.addIceCandidate(new RTCIceCandidate(c)); } catch (e) { }
+      }
+      state.pendingCandidates = [];
+    }
+
+    // Apply buffered offer (if callee received it before PeerConnection was ready)
+    if (!isCaller && state.pendingOffer) {
+      console.log('Applying buffered offer');
+      await handleOffer(state.pendingOffer.from, state.pendingOffer.offer);
+      state.pendingOffer = null;
+    }
 
     if (isCaller) {
       // Create and send offer
@@ -1257,12 +1331,25 @@ async function startWebRTC(isCaller) {
         targetUserId: state.callPeer.id,
         offer
       });
+      console.log('Offer sent');
     }
+
+    // Timeout: if not connected in 20 seconds, give up
+    setTimeout(() => {
+      if (state.peerConnection && state.callState === 'active') {
+        const iceState = state.peerConnection.iceConnectionState;
+        if (iceState !== 'connected' && iceState !== 'completed') {
+          console.error('Call connection timeout. ICE state:', iceState);
+          showCallToast('Не удалось подключиться — попробуйте позже');
+          endActiveCall();
+        }
+      }
+    }, 20000);
 
   } catch (err) {
     console.error('WebRTC error:', err);
     endActiveCall();
-    showCallToast('Не удалось начать звонок');
+    showCallToast('Не удалось начать звонок: ' + err.message);
   }
 }
 
@@ -1273,13 +1360,10 @@ function showActiveCall() {
 
   setAvatarElement(callActiveAvatar, state.callPeer.name, state.callPeer.avatarColor, state.callPeer.avatarUrl);
   callActiveName.textContent = state.callPeer.name;
+  callActiveTimer.textContent = 'Подключение...';
 
-  // Start timer
-  state.callStartTime = Date.now();
-  state.callTimer = setInterval(updateCallTimer, 1000);
-  callActiveTimer.textContent = '00:00';
-
-  // Reset mute/speaker state
+  // Timer starts only when ICE connects (see oniceconnectionstatechange)
+  state.callStartTime = null;
   state.isMuted = false;
   state.isSpeaker = false;
   callMuteBtn.classList.remove('active');
@@ -1299,36 +1383,32 @@ function updateCallTimer() {
 function endCallCleanup() {
   stopRingtone();
 
-  // Close peer connection
   if (state.peerConnection) {
     state.peerConnection.close();
     state.peerConnection = null;
   }
 
-  // Stop local stream
   if (state.localStream) {
     state.localStream.getTracks().forEach(t => t.stop());
     state.localStream = null;
   }
 
-  // Remove remote audio
   const remoteAudio = document.getElementById('remote-audio');
   if (remoteAudio) remoteAudio.remove();
 
-  // Clear timer
   if (state.callTimer) {
     clearInterval(state.callTimer);
     state.callTimer = null;
   }
 
-  // Reset state
   state.callState = 'idle';
   state.callPeer = null;
   state.callStartTime = null;
   state.isMuted = false;
   state.isSpeaker = false;
+  state.pendingOffer = null;
+  state.pendingCandidates = [];
 
-  // Hide all call screens
   callOutgoing.style.display = 'none';
   callIncoming.style.display = 'none';
   callActive.style.display = 'none';
@@ -1342,8 +1422,6 @@ function toggleMute() {
 }
 
 function toggleSpeaker() {
-  // Toggle speaker is mostly a visual indicator on desktop
-  // On mobile it could use setSinkId but browser support varies
   state.isSpeaker = !state.isSpeaker;
   callSpeakerBtn.classList.toggle('active', state.isSpeaker);
   const remoteAudio = document.getElementById('remote-audio');
@@ -1391,7 +1469,6 @@ function stopRingtone() {
 }
 
 function showCallToast(message) {
-  // Simple toast notification
   const toast = document.createElement('div');
   toast.textContent = message;
   toast.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.8);color:white;padding:10px 24px;border-radius:20px;font-size:14px;z-index:4000;animation:callFadeIn 0.3s ease;';
