@@ -3,7 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const { pool, initDB, ops, uuidv4, bcrypt, getRandomColor } = require('./database');
+const { initDB, ops, uuidv4, bcrypt, getRandomColor } = require('./database');
 
 const app = express();
 const server = http.createServer(app);
@@ -100,22 +100,19 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Debug: list all users (remove later)
-app.get('/api/users', async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT id, username, display_name, avatar_color, is_online, created_at FROM users ORDER BY created_at DESC`
-    );
-    return res.json({ count: rows.length, users: rows });
-  } catch (err) {
-    console.error('Users list error:', err);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
+// List all users (debug)
+app.get('/api/users', async (req, res) => {
+  try {
+    const users = await ops.getAllUsers();
+    res.json({ count: users.length, users });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
 });
 
 // ============ SOCKET.IO ============
@@ -328,6 +325,15 @@ app.get('*', (req, res) => {
 // ============ START ============
 async function start() {
   await initDB();
+
+  // Log registered users on startup
+  try {
+    const users = await ops.getAllUsers();
+    console.log(`Registered users: ${users.length}`);
+    users.forEach(u => console.log(`  - @${u.username} (${u.display_name})`));
+  } catch (e) {
+    console.log('Could not list users:', e.message);
+  }
 
   server.listen(PORT, () => {
     console.log(`\n  Messenger started!`);

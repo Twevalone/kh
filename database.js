@@ -198,11 +198,17 @@ const ops = {
       [chatId, userId]
     );
     return rows;
+  },
+
+  async getAllUsers() {
+    const { rows } = await pool.query(
+      `SELECT id, username, display_name, avatar_color, is_online, created_at FROM users ORDER BY created_at DESC`
+    );
+    return rows;
   }
 };
 
 module.exports = {
-  pool,
   initDB,
   ops,
   uuidv4,
