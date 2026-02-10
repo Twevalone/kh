@@ -101,7 +101,7 @@ const ops = {
     const { rows } = await pool.query(
       `SELECT id, username, display_name, avatar_color, is_online
        FROM users
-       WHERE (username LIKE $1 OR display_name LIKE $2) AND id != $3
+       WHERE (username ILIKE $1 OR display_name ILIKE $2) AND id != $3
        LIMIT 20`,
       [pattern, pattern, excludeId]
     );

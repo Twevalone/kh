@@ -6,10 +6,10 @@ const state = {
   currentChatId: null,
   currentOtherUser: null,
   chats: [],
-  messages: [],
   isRegister: false,
   typingTimeout: null,
   searchTimeout: null,
+  openingChat: false,  // guard against double-open
 };
 
 // ============ DOM ELEMENTS ============
@@ -155,26 +155,51 @@ function connectSocket() {
   }
 
   state.socket = io({
-    auth: { token: state.token }
+    auth: { token: state.token },
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    timeout: 20000
   });
 
   state.socket.on('connect', () => {
     console.log('Connected to server');
     loadChats();
+
+    // Re-join current chat room after reconnect
+    if (state.currentChatId) {
+      console.log('Rejoining chat room:', state.currentChatId);
+      state.socket.emit('chat:open', state.currentChatId, (data) => {
+        if (data && data.messages) {
+          // Re-render messages from server to ensure nothing is lost
+          renderMessages(data.messages);
+        }
+      });
+    }
   });
 
+  state.socket.on('disconnect', (reason) => {
+    console.log('Disconnected:', reason);
+  });
+
+  // Only logout on explicit auth failure, not on temporary connection issues
   state.socket.on('connect_error', (err) => {
     console.error('Connection error:', err.message);
-    if (err.message.includes('Authentication') || err.message.includes('token')) {
+    if (err.message === 'Invalid token' || err.message === 'Authentication required') {
       logout();
     }
+    // Otherwise just let Socket.IO reconnect automatically
   });
 
   // New message
   state.socket.on('message:new', (message) => {
     if (message.chat_id === state.currentChatId) {
-      appendMessage(message);
-      scrollToBottom();
+      // Don't add duplicate messages
+      if (!document.querySelector(`.message[data-id="${message.id}"]`)) {
+        appendMessage(message);
+        scrollToBottom();
+      }
 
       // Mark as read if chat is open
       if (message.sender_id !== state.user.id) {
@@ -192,7 +217,6 @@ function connectSocket() {
   // Messages read
   state.socket.on('messages:read', ({ chatId, readBy }) => {
     if (chatId === state.currentChatId && readBy !== state.user.id) {
-      // Update check marks
       document.querySelectorAll('.message-out .message-check').forEach(el => {
         el.classList.add('read');
       });
@@ -219,7 +243,7 @@ function connectSocket() {
   // Online/offline
   state.socket.on('user:online', ({ userId }) => {
     if (state.currentOtherUser && state.currentOtherUser.id === userId) {
-      state.currentOtherUser.is_online = 1;
+      state.currentOtherUser.is_online = true;
       updateChatStatus();
     }
     updateChatListOnlineStatus(userId, true);
@@ -227,7 +251,7 @@ function connectSocket() {
 
   state.socket.on('user:offline', ({ userId }) => {
     if (state.currentOtherUser && state.currentOtherUser.id === userId) {
-      state.currentOtherUser.is_online = 0;
+      state.currentOtherUser.is_online = false;
       updateChatStatus();
     }
     updateChatListOnlineStatus(userId, false);
@@ -237,6 +261,8 @@ function connectSocket() {
 function logout() {
   state.token = null;
   state.user = null;
+  state.currentChatId = null;
+  state.currentOtherUser = null;
   localStorage.removeItem('token');
   localStorage.removeItem('user');
   if (state.socket) {
@@ -248,6 +274,7 @@ function logout() {
 
 // ============ CHATS ============
 function loadChats() {
+  if (!state.socket || !state.socket.connected) return;
   state.socket.emit('chats:list', (chats) => {
     state.chats = chats;
     renderChatList();
@@ -264,6 +291,7 @@ function renderChatList() {
       const isMyMessage = chat.last_message_sender === state.user.id;
       const preview = chat.last_message || '';
       const truncated = preview.length > 40 ? preview.substring(0, 40) + '...' : preview;
+      const unread = parseInt(chat.unread_count) || 0;
 
       return `
         <div class="chat-item ${isActive ? 'active' : ''}" data-chat-id="${chat.chat_id}" data-user-id="${chat.other_user_id}">
@@ -280,7 +308,7 @@ function renderChatList() {
               <div class="chat-item-message">
                 ${isMyMessage ? '<span class="sender-prefix">Вы: </span>' : ''}${escapeHtml(truncated)}
               </div>
-              ${chat.unread_count > 0 ? `<div class="unread-badge">${chat.unread_count}</div>` : ''}
+              ${unread > 0 ? `<div class="unread-badge">${unread}</div>` : ''}
             </div>
           </div>
         </div>
@@ -312,31 +340,35 @@ function updateChatListOnlineStatus(userId, isOnline) {
 
 // ============ OPEN CHAT ============
 function openChat(otherUserId) {
+  // Prevent double-open / race conditions
+  if (state.openingChat) return;
+  state.openingChat = true;
+
   state.socket.emit('chat:start', otherUserId, (data) => {
+    state.openingChat = false;
+
+    if (!data || !data.chatId) {
+      console.error('Failed to open chat');
+      return;
+    }
+
     state.currentChatId = data.chatId;
     state.currentOtherUser = data.otherUser;
 
     // Join socket room
     state.socket.emit('chat:open', data.chatId, () => {});
 
-    // Update UI
-    const initials = getInitials(data.otherUser.display_name);
-    chatAvatar.style.background = data.otherUser.avatar_color;
-    chatAvatar.textContent = initials;
-    chatName.textContent = data.otherUser.display_name;
-    updateChatStatus();
+    // Update header UI
+    if (data.otherUser) {
+      const initials = getInitials(data.otherUser.display_name);
+      chatAvatar.style.background = data.otherUser.avatar_color;
+      chatAvatar.textContent = initials;
+      chatName.textContent = data.otherUser.display_name;
+      updateChatStatus();
+    }
 
     // Render messages
-    messagesList.innerHTML = '';
-    let lastDate = '';
-    data.messages.forEach(msg => {
-      const msgDate = formatDate(msg.created_at);
-      if (msgDate !== lastDate) {
-        appendDateSeparator(msgDate);
-        lastDate = msgDate;
-      }
-      appendMessage(msg);
-    });
+    renderMessages(data.messages || []);
 
     // Show chat
     chatEmpty.style.display = 'none';
@@ -357,6 +389,20 @@ function openChat(otherUserId) {
   });
 }
 
+// Render all messages from array (replaces existing)
+function renderMessages(messages) {
+  messagesList.innerHTML = '';
+  let lastDate = '';
+  messages.forEach(msg => {
+    const msgDate = formatDate(msg.created_at);
+    if (msgDate !== lastDate) {
+      appendDateSeparator(msgDate);
+      lastDate = msgDate;
+    }
+    appendMessage(msg);
+  });
+}
+
 function updateChatStatus() {
   if (!state.currentOtherUser) return;
   if (state.currentOtherUser.is_online) {
@@ -374,7 +420,6 @@ function appendMessage(msg) {
   const isMine = msg.sender_id === state.user.id;
   const time = formatMessageTime(msg.created_at);
 
-  // Check marks SVG
   const checkSvg = isMine ? `
     <span class="message-check ${msg.is_read ? 'read' : ''}">
       <svg viewBox="0 0 16 16"><path fill="currentColor" d="M1.5 8.5l3 3 7-7" stroke="currentColor" stroke-width="1.5" fill="none"/><path fill="currentColor" d="M5.5 8.5l3 3 7-7" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
@@ -531,11 +576,13 @@ function setupEventListeners() {
     updateSendButton();
 
     // Typing indicator
-    if (state.currentChatId) {
+    if (state.currentChatId && state.socket && state.socket.connected) {
       state.socket.emit('typing:start', state.currentChatId);
       clearTimeout(state.typingTimeout);
       state.typingTimeout = setTimeout(() => {
-        state.socket.emit('typing:stop', state.currentChatId);
+        if (state.socket && state.socket.connected) {
+          state.socket.emit('typing:stop', state.currentChatId);
+        }
       }, 2000);
     }
   });
@@ -596,10 +643,8 @@ function linkify(text) {
 
 function parseDate(dateStr) {
   if (!dateStr) return null;
-  // Handle both ISO format (PostgreSQL) and SQLite format
   const d = new Date(dateStr);
   if (!isNaN(d)) return d;
-  // Fallback for SQLite "YYYY-MM-DD HH:MM:SS" format
   return new Date(dateStr.replace(' ', 'T') + 'Z');
 }
 
