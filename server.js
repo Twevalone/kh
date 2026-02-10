@@ -3,13 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const {
-  db, createUser, getUserByUsername, getUserById,
-  searchUsers, setUserOnline, setUserOffline,
-  createChat, addChatMember, findPrivateChat,
-  getUserChats, createMessage, getChatMessages,
-  markMessagesAsRead, uuidv4, bcrypt, getRandomColor
-} = require('./database');
+const { initDB, ops, uuidv4, bcrypt, getRandomColor } = require('./database');
 
 const app = express();
 const server = http.createServer(app);
@@ -17,7 +11,7 @@ const io = new Server(server, {
   cors: { origin: '*' }
 });
 
-const JWT_SECRET = process.env.JWT_SECRET || 'tg-messenger-secret-key-' + Math.random().toString(36);
+const JWT_SECRET = process.env.JWT_SECRET || 'tg-messenger-secret-key-change-me';
 const PORT = process.env.PORT || 3000;
 
 // Serve static files
@@ -47,7 +41,7 @@ app.post('/api/register', async (req, res) => {
       return res.status(400).json({ error: 'Пароль минимум 4 символа' });
     }
 
-    const existing = getUserByUsername.get(username.toLowerCase());
+    const existing = ops.getUserByUsername(username.toLowerCase());
     if (existing) {
       return res.status(400).json({ error: 'Имя пользователя занято' });
     }
@@ -56,7 +50,7 @@ app.post('/api/register', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
     const avatarColor = getRandomColor();
 
-    createUser.run(id, username.toLowerCase(), displayName, passwordHash, avatarColor);
+    ops.createUser(id, username.toLowerCase(), displayName, passwordHash, avatarColor);
 
     const token = jwt.sign({ userId: id }, JWT_SECRET, { expiresIn: '30d' });
 
@@ -79,7 +73,7 @@ app.post('/api/login', async (req, res) => {
       return res.status(400).json({ error: 'Введите имя пользователя и пароль' });
     }
 
-    const user = getUserByUsername.get(username.toLowerCase());
+    const user = ops.getUserByUsername(username.toLowerCase());
     if (!user) {
       return res.status(400).json({ error: 'Пользователь не найден' });
     }
@@ -136,48 +130,46 @@ io.on('connection', (socket) => {
     onlineUsers.set(userId, new Set());
   }
   onlineUsers.get(userId).add(socket.id);
-  setUserOnline.run(userId);
+  ops.setUserOnline(userId);
 
-  // Broadcast online status to all connected users
+  // Broadcast online status
   io.emit('user:online', { userId });
 
   // Get user info
   socket.on('user:me', (callback) => {
-    const user = getUserById.get(userId);
+    const user = ops.getUserById(userId);
     callback(user);
   });
 
   // Search users
   socket.on('users:search', (query, callback) => {
-    const pattern = `%${query}%`;
-    const users = searchUsers.all(pattern, pattern, userId);
+    const users = ops.searchUsers(query, userId);
     callback(users);
   });
 
   // Get chat list
   socket.on('chats:list', (callback) => {
-    const chats = getUserChats.all(userId, userId, userId);
+    const chats = ops.getUserChats(userId);
     callback(chats);
   });
 
   // Start or get a private chat
   socket.on('chat:start', (otherUserId, callback) => {
-    let chat = findPrivateChat.get(userId, otherUserId);
+    let chat = ops.findPrivateChat(userId, otherUserId);
 
     if (!chat) {
       const chatId = uuidv4();
-      createChat.run(chatId, 'private');
-      addChatMember.run(chatId, userId);
-      addChatMember.run(chatId, otherUserId);
+      ops.createChat(chatId, 'private');
+      ops.addChatMember(chatId, userId);
+      ops.addChatMember(chatId, otherUserId);
       chat = { chat_id: chatId };
     }
 
-    // Get chat details
-    const otherUser = getUserById.get(otherUserId);
-    const messages = getChatMessages.all(chat.chat_id);
+    const otherUser = ops.getUserById(otherUserId);
+    const messages = ops.getChatMessages(chat.chat_id);
 
     // Mark messages as read
-    markMessagesAsRead.run(chat.chat_id, userId);
+    ops.markMessagesAsRead(chat.chat_id, userId);
 
     // Join the socket room
     socket.join(chat.chat_id);
@@ -191,8 +183,8 @@ io.on('connection', (socket) => {
 
   // Open existing chat
   socket.on('chat:open', (chatId, callback) => {
-    const messages = getChatMessages.all(chatId);
-    markMessagesAsRead.run(chatId, userId);
+    const messages = ops.getChatMessages(chatId);
+    ops.markMessagesAsRead(chatId, userId);
 
     socket.join(chatId);
 
@@ -211,8 +203,9 @@ io.on('connection', (socket) => {
     const messageId = uuidv4();
     const trimmedText = text.trim();
 
-    createMessage.run(messageId, chatId, userId, trimmedText);
+    ops.createMessage(messageId, chatId, userId, trimmedText);
 
+    const sender = ops.getUserById(userId);
     const message = {
       id: messageId,
       chat_id: chatId,
@@ -220,20 +213,16 @@ io.on('connection', (socket) => {
       text: trimmedText,
       created_at: new Date().toISOString().replace('T', ' ').substring(0, 19),
       is_read: 0,
-      sender_username: getUserById.get(userId)?.username,
-      sender_display_name: getUserById.get(userId)?.display_name,
-      sender_avatar_color: getUserById.get(userId)?.avatar_color
+      sender_username: sender?.username,
+      sender_display_name: sender?.display_name,
+      sender_avatar_color: sender?.avatar_color
     };
 
-    // Send to all in room including sender
+    // Send to all in room
     io.to(chatId).emit('message:new', message);
 
-    // Also notify the other user to refresh their chat list
-    // (in case they don't have this chat open)
-    const chatMembers = db.prepare(
-      'SELECT user_id FROM chat_members WHERE chat_id = ? AND user_id != ?'
-    ).all(chatId, userId);
-
+    // Notify other members to refresh chat list
+    const chatMembers = ops.getChatMembersExcept(chatId, userId);
     chatMembers.forEach(member => {
       const memberSockets = onlineUsers.get(member.user_id);
       if (memberSockets) {
@@ -248,7 +237,7 @@ io.on('connection', (socket) => {
 
   // Mark messages as read
   socket.on('messages:markRead', (chatId) => {
-    markMessagesAsRead.run(chatId, userId);
+    ops.markMessagesAsRead(chatId, userId);
     socket.to(chatId).emit('messages:read', { chatId, readBy: userId });
   });
 
@@ -270,7 +259,7 @@ io.on('connection', (socket) => {
       userSockets.delete(socket.id);
       if (userSockets.size === 0) {
         onlineUsers.delete(userId);
-        setUserOffline.run(userId);
+        ops.setUserOffline(userId);
         io.emit('user:offline', { userId });
       }
     }
@@ -282,8 +271,17 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-server.listen(PORT, () => {
-  console.log(`\n  🚀 Мессенджер запущен!`);
-  console.log(`  📱 Откройте: http://localhost:${PORT}`);
-  console.log(`  🌐 Для друга: http://<ваш-ip>:${PORT}\n`);
+// ============ START ============
+async function start() {
+  await initDB();
+
+  server.listen(PORT, () => {
+    console.log(`\n  Messenger started!`);
+    console.log(`  Open: http://localhost:${PORT}\n`);
+  });
+}
+
+start().catch(err => {
+  console.error('Failed to start:', err);
+  process.exit(1);
 });

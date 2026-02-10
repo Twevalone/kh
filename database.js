@@ -1,58 +1,124 @@
-const Database = require('better-sqlite3');
+const initSqlJs = require('sql.js');
+const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 
-const db = new Database(path.join(__dirname, 'messenger.db'));
+const DB_PATH = path.join(__dirname, 'messenger.db');
 
-// Enable WAL mode for better performance
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+let db;
 
-// Create tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    username TEXT UNIQUE NOT NULL,
-    display_name TEXT NOT NULL,
-    password_hash TEXT NOT NULL,
-    avatar_color TEXT NOT NULL DEFAULT '#5B9BD5',
-    last_seen TEXT DEFAULT (datetime('now')),
-    is_online INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
+// Save DB to file periodically
+let saveTimer = null;
+function scheduleSave() {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    try {
+      const data = db.export();
+      fs.writeFileSync(DB_PATH, Buffer.from(data));
+    } catch (e) {
+      console.error('DB save error:', e);
+    }
+  }, 1000);
+}
 
-  CREATE TABLE IF NOT EXISTS chats (
-    id TEXT PRIMARY KEY,
-    type TEXT NOT NULL DEFAULT 'private',
-    created_at TEXT DEFAULT (datetime('now'))
-  );
+async function initDB() {
+  const SQL = await initSqlJs();
 
-  CREATE TABLE IF NOT EXISTS chat_members (
-    chat_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    joined_at TEXT DEFAULT (datetime('now')),
-    PRIMARY KEY (chat_id, user_id),
-    FOREIGN KEY (chat_id) REFERENCES chats(id),
-    FOREIGN KEY (user_id) REFERENCES users(id)
-  );
+  // Load existing DB or create new
+  if (fs.existsSync(DB_PATH)) {
+    const fileBuffer = fs.readFileSync(DB_PATH);
+    db = new SQL.Database(fileBuffer);
+  } else {
+    db = new SQL.Database();
+  }
 
-  CREATE TABLE IF NOT EXISTS messages (
-    id TEXT PRIMARY KEY,
-    chat_id TEXT NOT NULL,
-    sender_id TEXT NOT NULL,
-    text TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
-    is_read INTEGER DEFAULT 0,
-    FOREIGN KEY (chat_id) REFERENCES chats(id),
-    FOREIGN KEY (sender_id) REFERENCES users(id)
-  );
+  db.run('PRAGMA foreign_keys = ON;');
 
-  CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, created_at);
-  CREATE INDEX IF NOT EXISTS idx_chat_members_user ON chat_members(user_id);
-  CREATE INDEX IF NOT EXISTS idx_messages_read ON messages(chat_id, is_read);
-`);
+  // Create tables
+  db.run(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      display_name TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      avatar_color TEXT NOT NULL DEFAULT '#5B9BD5',
+      last_seen TEXT DEFAULT (datetime('now')),
+      is_online INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS chats (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL DEFAULT 'private',
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS chat_members (
+      chat_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      joined_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (chat_id, user_id),
+      FOREIGN KEY (chat_id) REFERENCES chats(id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      sender_id TEXT NOT NULL,
+      text TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      is_read INTEGER DEFAULT 0,
+      FOREIGN KEY (chat_id) REFERENCES chats(id),
+      FOREIGN KEY (sender_id) REFERENCES users(id)
+    )
+  `);
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, created_at)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_chat_members_user ON chat_members(user_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_messages_read ON messages(chat_id, is_read)`);
+
+  // Save initial state
+  const data = db.export();
+  fs.writeFileSync(DB_PATH, Buffer.from(data));
+
+  console.log('Database initialized');
+  return db;
+}
+
+// Helper: run query and return array of row objects
+function queryAll(sql, params = []) {
+  const stmt = db.prepare(sql);
+  stmt.bind(params);
+  const results = [];
+  while (stmt.step()) {
+    results.push(stmt.getAsObject());
+  }
+  stmt.free();
+  return results;
+}
+
+// Helper: run query and return first row object or null
+function queryOne(sql, params = []) {
+  const rows = queryAll(sql, params);
+  return rows.length > 0 ? rows[0] : null;
+}
+
+// Helper: run statement (INSERT/UPDATE/DELETE)
+function execute(sql, params = []) {
+  db.run(sql, params);
+  scheduleSave();
+}
+
+// ============ AVATAR COLORS ============
 const AVATAR_COLORS = [
   '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4',
   '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F',
@@ -64,108 +130,126 @@ function getRandomColor() {
   return AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
 }
 
-// User operations
-const createUser = db.prepare(`
-  INSERT INTO users (id, username, display_name, password_hash, avatar_color)
-  VALUES (?, ?, ?, ?, ?)
-`);
+// ============ OPERATIONS ============
+const ops = {
+  createUser(id, username, displayName, passwordHash, avatarColor) {
+    execute(
+      `INSERT INTO users (id, username, display_name, password_hash, avatar_color) VALUES (?, ?, ?, ?, ?)`,
+      [id, username, displayName, passwordHash, avatarColor]
+    );
+  },
 
-const getUserByUsername = db.prepare(`
-  SELECT * FROM users WHERE username = ?
-`);
+  getUserByUsername(username) {
+    return queryOne(`SELECT * FROM users WHERE username = ?`, [username]);
+  },
 
-const getUserById = db.prepare(`
-  SELECT id, username, display_name, avatar_color, last_seen, is_online FROM users WHERE id = ?
-`);
+  getUserById(id) {
+    return queryOne(
+      `SELECT id, username, display_name, avatar_color, last_seen, is_online FROM users WHERE id = ?`,
+      [id]
+    );
+  },
 
-const searchUsers = db.prepare(`
-  SELECT id, username, display_name, avatar_color, is_online
-  FROM users
-  WHERE (username LIKE ? OR display_name LIKE ?) AND id != ?
-  LIMIT 20
-`);
+  searchUsers(query, excludeId) {
+    const pattern = `%${query}%`;
+    return queryAll(
+      `SELECT id, username, display_name, avatar_color, is_online
+       FROM users
+       WHERE (username LIKE ? OR display_name LIKE ?) AND id != ?
+       LIMIT 20`,
+      [pattern, pattern, excludeId]
+    );
+  },
 
-const setUserOnline = db.prepare(`
-  UPDATE users SET is_online = 1, last_seen = datetime('now') WHERE id = ?
-`);
+  setUserOnline(id) {
+    execute(`UPDATE users SET is_online = 1, last_seen = datetime('now') WHERE id = ?`, [id]);
+  },
 
-const setUserOffline = db.prepare(`
-  UPDATE users SET is_online = 0, last_seen = datetime('now') WHERE id = ?
-`);
+  setUserOffline(id) {
+    execute(`UPDATE users SET is_online = 0, last_seen = datetime('now') WHERE id = ?`, [id]);
+  },
 
-// Chat operations
-const createChat = db.prepare(`
-  INSERT INTO chats (id, type) VALUES (?, ?)
-`);
+  createChat(id, type) {
+    execute(`INSERT INTO chats (id, type) VALUES (?, ?)`, [id, type]);
+  },
 
-const addChatMember = db.prepare(`
-  INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)
-`);
+  addChatMember(chatId, userId) {
+    execute(`INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)`, [chatId, userId]);
+  },
 
-const findPrivateChat = db.prepare(`
-  SELECT cm1.chat_id FROM chat_members cm1
-  JOIN chat_members cm2 ON cm1.chat_id = cm2.chat_id
-  JOIN chats c ON c.id = cm1.chat_id
-  WHERE cm1.user_id = ? AND cm2.user_id = ? AND c.type = 'private'
-`);
+  findPrivateChat(userId1, userId2) {
+    return queryOne(
+      `SELECT cm1.chat_id FROM chat_members cm1
+       JOIN chat_members cm2 ON cm1.chat_id = cm2.chat_id
+       JOIN chats c ON c.id = cm1.chat_id
+       WHERE cm1.user_id = ? AND cm2.user_id = ? AND c.type = 'private'`,
+      [userId1, userId2]
+    );
+  },
 
-const getUserChats = db.prepare(`
-  SELECT 
-    c.id as chat_id,
-    c.type,
-    u.id as other_user_id,
-    u.username as other_username,
-    u.display_name as other_display_name,
-    u.avatar_color as other_avatar_color,
-    u.is_online as other_is_online,
-    u.last_seen as other_last_seen,
-    (SELECT text FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message,
-    (SELECT sender_id FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_sender,
-    (SELECT created_at FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_time,
-    (SELECT COUNT(*) FROM messages WHERE chat_id = c.id AND is_read = 0 AND sender_id != ?) as unread_count
-  FROM chats c
-  JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = ?
-  JOIN chat_members cm2 ON cm2.chat_id = c.id AND cm2.user_id != ?
-  JOIN users u ON u.id = cm2.user_id
-  WHERE c.type = 'private'
-  ORDER BY last_message_time DESC
-`);
+  getUserChats(userId) {
+    return queryAll(
+      `SELECT 
+        c.id as chat_id,
+        c.type,
+        u.id as other_user_id,
+        u.username as other_username,
+        u.display_name as other_display_name,
+        u.avatar_color as other_avatar_color,
+        u.is_online as other_is_online,
+        u.last_seen as other_last_seen,
+        (SELECT text FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message,
+        (SELECT sender_id FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_sender,
+        (SELECT created_at FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_time,
+        (SELECT COUNT(*) FROM messages WHERE chat_id = c.id AND is_read = 0 AND sender_id != ?) as unread_count
+      FROM chats c
+      JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = ?
+      JOIN chat_members cm2 ON cm2.chat_id = c.id AND cm2.user_id != ?
+      JOIN users u ON u.id = cm2.user_id
+      WHERE c.type = 'private'
+      ORDER BY last_message_time DESC`,
+      [userId, userId, userId]
+    );
+  },
 
-// Message operations
-const createMessage = db.prepare(`
-  INSERT INTO messages (id, chat_id, sender_id, text) VALUES (?, ?, ?, ?)
-`);
+  createMessage(id, chatId, senderId, text) {
+    execute(
+      `INSERT INTO messages (id, chat_id, sender_id, text) VALUES (?, ?, ?, ?)`,
+      [id, chatId, senderId, text]
+    );
+  },
 
-const getChatMessages = db.prepare(`
-  SELECT 
-    m.id, m.chat_id, m.sender_id, m.text, m.created_at, m.is_read,
-    u.username as sender_username, u.display_name as sender_display_name, u.avatar_color as sender_avatar_color
-  FROM messages m
-  JOIN users u ON u.id = m.sender_id
-  WHERE m.chat_id = ?
-  ORDER BY m.created_at ASC
-`);
+  getChatMessages(chatId) {
+    return queryAll(
+      `SELECT 
+        m.id, m.chat_id, m.sender_id, m.text, m.created_at, m.is_read,
+        u.username as sender_username, u.display_name as sender_display_name, u.avatar_color as sender_avatar_color
+      FROM messages m
+      JOIN users u ON u.id = m.sender_id
+      WHERE m.chat_id = ?
+      ORDER BY m.created_at ASC`,
+      [chatId]
+    );
+  },
 
-const markMessagesAsRead = db.prepare(`
-  UPDATE messages SET is_read = 1
-  WHERE chat_id = ? AND sender_id != ? AND is_read = 0
-`);
+  markMessagesAsRead(chatId, userId) {
+    execute(
+      `UPDATE messages SET is_read = 1 WHERE chat_id = ? AND sender_id != ? AND is_read = 0`,
+      [chatId, userId]
+    );
+  },
+
+  getChatMembersExcept(chatId, userId) {
+    return queryAll(
+      `SELECT user_id FROM chat_members WHERE chat_id = ? AND user_id != ?`,
+      [chatId, userId]
+    );
+  }
+};
 
 module.exports = {
-  db,
-  createUser,
-  getUserByUsername,
-  getUserById,
-  searchUsers,
-  setUserOnline,
-  setUserOffline,
-  createChat,
-  addChatMember,
-  findPrivateChat,
-  getUserChats,
-  createMessage,
-  getChatMessages,
-  markMessagesAsRead,
+  initDB,
+  ops,
   uuidv4,
   bcrypt,
   getRandomColor
