@@ -317,8 +317,11 @@ io.on('connection', (socket) => {
   });
 });
 
-// SPA fallback
+// SPA fallback (only for non-API routes)
 app.get('*', (req, res) => {
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'API endpoint not found' });
+  }
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
