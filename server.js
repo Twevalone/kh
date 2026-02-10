@@ -100,6 +100,19 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+// Debug: list all users (remove later)
+app.get('/api/users', async (req, res) => {
+  try {
+    const { rows } = await require('./database').pool.query(
+      `SELECT id, username, display_name, avatar_color, is_online, created_at FROM users ORDER BY created_at DESC`
+    );
+    res.json({ count: rows.length, users: rows });
+  } catch (err) {
+    console.error('Users list error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============ SOCKET.IO ============
 
 // Map of userId -> Set of socket ids

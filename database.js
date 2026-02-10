@@ -202,6 +202,7 @@ const ops = {
 };
 
 module.exports = {
+  pool,
   initDB,
   ops,
   uuidv4,
