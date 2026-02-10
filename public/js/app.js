@@ -58,6 +58,7 @@ function init() {
     showAuth();
   }
   setupEventListeners();
+  initEmojiPicker();
 }
 
 // ============ AUTH ============
@@ -534,6 +535,74 @@ function hideSearch() {
   searchInput.value = '';
 }
 
+// ============ EMOJI PICKER ============
+const EMOJI_DATA = {
+  'Смайлы': ['😀','😂','🤣','😊','😍','🥰','😘','😜','🤪','😎','🤩','🥳','😏','😒','😤','😡','🤬','😱','😨','😰','😢','😭','🥺','😩','😫','🤯','😳','🤗','🤔','🤫','🤭','🙄','😴','🤮','🤢','🤧','😷','🤒','🤕','😵','🥴','😇','🤠','🤑','😈','👻','💀','☠️','👽','🤖','💩','🤡'],
+  'Жесты': ['👍','👎','👊','✊','🤛','🤜','👏','🙌','👐','🤲','🤝','🙏','✌️','🤞','🤟','🤘','👌','🤌','🤏','👈','👉','👆','👇','☝️','✋','🤚','🖐️','🖖','👋','🤙','💪','🖕','✍️','🫶','❤️'],
+  'Люди': ['😺','😸','😹','😻','😼','😽','🙀','😿','😾','🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔','🐧','🐦','🦅','🦆','🦉','🐺','🐗','🐴','🦄','🐝','🐛','🦋','🐌','🐞'],
+  'Еда': ['🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🥑','🍆','🌽','🥕','🧄','🧅','🥔','🍕','🍔','🍟','🌭','🍿','🧂','🥚','🍳','🥓','🥩','🍗','🍖','🧀','🌮','🌯','🍣','🍱','🍩','🍪','🎂','🍰','🧁','🍫','🍬','🍭','☕','🍵','🧃','🍺','🍻','🥂','🍷'],
+  'Предметы': ['⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🎱','🏓','🏸','🥅','⛳','🎣','🎯','🥊','🎮','🕹️','🎲','🎭','🎨','🎬','🎤','🎧','🎵','🎶','🎹','🥁','🎷','🎺','🎸','💻','📱','💡','🔋','📷','📹','📺','📻','⏰','💰','💎','🔑','🔒','📌','✂️','📎','📝','📚'],
+  'Символы': ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','☮️','✝️','☪️','🕉️','☸️','✡️','🔯','☯️','☦️','🛐','⛎','♈','♉','♊','♋','♌','♍','♎','♏','♐','♑','♒','♓','🆔','⚛️','✅','❌','❓','❗','‼️','⁉️','💯','🔥','⭐','🌟','✨','💫','💥','💢','💤','🎉','🎊']
+};
+
+const emojiPicker = $('#emoji-picker');
+const emojiGrid = $('#emoji-grid');
+const emojiTabs = $('#emoji-tabs');
+const emojiBtn = $('#emoji-btn');
+let currentEmojiCategory = null;
+
+function initEmojiPicker() {
+  const categories = Object.keys(EMOJI_DATA);
+
+  // Create tabs
+  emojiTabs.innerHTML = categories.map((cat, i) => {
+    const firstEmoji = EMOJI_DATA[cat][0];
+    return `<button class="emoji-tab ${i === 0 ? 'active' : ''}" data-cat="${cat}" title="${cat}">${firstEmoji}</button>`;
+  }).join('');
+
+  // Show first category
+  showEmojiCategory(categories[0]);
+
+  // Tab clicks
+  emojiTabs.addEventListener('click', (e) => {
+    const tab = e.target.closest('.emoji-tab');
+    if (!tab) return;
+    emojiTabs.querySelectorAll('.emoji-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    showEmojiCategory(tab.dataset.cat);
+  });
+
+  // Emoji clicks
+  emojiGrid.addEventListener('click', (e) => {
+    const item = e.target.closest('.emoji-item');
+    if (!item) return;
+    insertEmoji(item.textContent);
+  });
+}
+
+function showEmojiCategory(cat) {
+  if (currentEmojiCategory === cat) return;
+  currentEmojiCategory = cat;
+  const emojis = EMOJI_DATA[cat] || [];
+  emojiGrid.innerHTML = emojis.map(e => `<button class="emoji-item">${e}</button>`).join('');
+}
+
+function insertEmoji(emoji) {
+  const start = messageInput.selectionStart;
+  const end = messageInput.selectionEnd;
+  const text = messageInput.value;
+  messageInput.value = text.substring(0, start) + emoji + text.substring(end);
+  messageInput.selectionStart = messageInput.selectionEnd = start + emoji.length;
+  messageInput.focus();
+  updateSendButton();
+  autoResizeInput();
+}
+
+function toggleEmojiPicker() {
+  const isOpen = emojiPicker.style.display !== 'none';
+  emojiPicker.style.display = isOpen ? 'none' : 'flex';
+}
+
 // ============ EVENT LISTENERS ============
 function setupEventListeners() {
   // Auth
@@ -570,8 +639,19 @@ function setupEventListeners() {
     }
   });
 
-  // Close search on click outside
+  // Emoji picker
+  emojiBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleEmojiPicker();
+  });
+
+  // Close emoji picker and search on click outside
   document.addEventListener('click', (e) => {
+    // Close emoji picker
+    if (emojiPicker.style.display !== 'none' && !emojiPicker.contains(e.target) && !emojiBtn.contains(e.target)) {
+      emojiPicker.style.display = 'none';
+    }
+    // Close search
     if (!searchResults.contains(e.target) && !searchInput.contains(e.target)) {
       if (searchResults.style.display === 'block') {
         hideSearch();
